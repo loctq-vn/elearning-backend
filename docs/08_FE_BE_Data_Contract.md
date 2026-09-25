@@ -2,7 +2,7 @@
 
 > **Dự án:** Xây dựng nền tảng học trực tuyến thông minh tích hợp AI Trợ giảng tương tác ngữ cảnh bài giảng  
 > **Phiên bản:** 1.0 — Ngày tạo: 08/09/2026  
-> **Nguồn tham chiếu:** `07_FE_Logic_Interaction_Spec.md`  
+> **Nguồn tham chiếu:** `07_FE_Logic_Interaction_Spec.md` (tài liệu Frontend, **không nằm trong repo Backend này**)  
 > **Mục đích:** Định nghĩa chính xác dữ liệu trao đổi FE ↔ BE cho **mọi** màn hình/luồng, dùng làm cơ sở thiết kế API phía Backend (FastAPI).
 
 ---
@@ -2057,15 +2057,19 @@ Tất cả response lỗi tuân theo format thống nhất:
 
 | Hạng mục | Số lượng |
 |----------|----------|
-| Tổng số endpoint | **~63** |
+> Số liệu dưới đây được đối chiếu khớp với bảng ở **PHỤ LỤC D** (tổng cộng 75 dòng endpoint).
+
+| Hạng mục | Số lượng |
+|----------|----------|
+| Tổng số endpoint | **75** |
 | Nhóm Authentication | **8** endpoint |
-| Nhóm Khóa học & Bài giảng | **15** endpoint |
+| Nhóm Khóa học & Bài giảng | **18** endpoint |
 | Nhóm Tiến độ học tập | **2** endpoint |
-| Nhóm AI Q&A + Tóm tắt | **4** endpoint |
-| Nhóm Quiz & Bài tập | **8** endpoint |
+| Nhóm AI Q&A + Tóm tắt | **5** endpoint |
+| Nhóm Quiz & Bài tập | **10** endpoint |
 | Nhóm Ghi chú | **4** endpoint |
 | Nhóm Thanh toán | **4** endpoint |
-| Nhóm Pipeline video | **6** endpoint |
+| Nhóm Pipeline video & Transcript | **8** endpoint |
 | Nhóm Thông báo | **3** endpoint |
 | Nhóm Hồ sơ cá nhân & quản lý học viên | **6** endpoint |
 | Nhóm Báo cáo & Thống kê (Admin) | **7** endpoint |

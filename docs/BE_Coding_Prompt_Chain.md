@@ -2,7 +2,7 @@
 
 ## Cách Dùng Bộ Prompt Này
 
-- Bộ tài liệu gồm **10 prompt viết code theo thứ tự nghiêm ngặt**, từ hạ tầng, database, module nghiệp vụ cho đến AI pipeline và thanh toán.
+- Bộ tài liệu gồm **11 bước (Prompt 0 đến Prompt 10)** theo thứ tự nghiêm ngặt: Prompt 0 đồng bộ tooling baseline, sau đó từ hạ tầng, database, module nghiệp vụ cho đến AI pipeline và thanh toán.
 - Mỗi prompt đã chứa sẵn **Bối cảnh dự án (Project Context)** và các **Ràng buộc kỹ thuật (Technical Constraints)**, giúp bạn có thể sao chép trực tiếp vào các phiên làm việc AI lập trình (như Antigravity IDE, Cursor, Claude Code...) mà không sợ AI bị lệch hướng hay quên ngữ cảnh.
 - Mỗi prompt chỉ định rõ:
   - **Mục tiêu giai đoạn**
@@ -19,13 +19,41 @@
 Dự án: Xây dựng nền tảng học trực tuyến thông minh tích hợp AI Trợ giảng tương tác ngữ cảnh bài giảng.
 Kiến trúc Backend: Python FastAPI, Pydantic v2, SQLAlchemy 2.0 (Async), PostgreSQL + pgvector, Alembic.
 Hạ tầng & Dịch vụ:
-- Database: Supabase PostgreSQL + pgvector (Cloud chính thức của dự án; container pgvector/pgvector:pg16 chỉ dùng cho dev offline).
-- Storage: Cloudflare R2 — Cloud chính thức của dự án, mọi thao tác đi qua Storage Adapter (SDK boto3 cấu hình tương thích S3). MinIO chỉ dùng cho local testing. Không dùng AWS ở giai đoạn hiện tại.
+- Database: Supabase PostgreSQL + pgvector (cloud chính thức, dùng thống nhất cho mọi môi trường). KHÔNG dùng PostgreSQL cục bộ hay container pgvector.
+- Storage: Cloudflare R2 — cloud chính thức duy nhất, dùng cho mọi môi trường. Mọi thao tác đi qua Storage Adapter (SDK boto3 cấu hình tương thích S3). KHÔNG dùng MinIO hay bất kỳ storage cục bộ nào. Không dùng AWS ở giai đoạn hiện tại.
 - Xử lý Media: FFmpeg tự chuyển mã HLS đa độ phân giải, Whisper STT phiên âm tiếng Việt.
 - AI RAG: OpenAI text-embedding-3-small (1536 dim, cosine similarity), LLM chính GPT-4o-mini, LLM dự phòng Gemini 1.5 Flash.
 - Thanh toán: Cổng PayOS (VietQR, xác thực Webhook bằng chữ ký HMAC, xử lý Idempotent).
 Nguyên tắc kiến trúc: Clean Layered Architecture (Router -> Middleware/Permissions -> Service -> Repository -> Database/Adapters).
 Mọi phản hồi lỗi phải đúng chuẩn: { "error": { "code": "SCREAMING_SNAKE_CASE", "message": "Thông điệp tiếng Việt", "details": null } }.
+```
+
+---
+
+## Prompt 0: Đồng Bộ Tooling Baseline & Quy Ước Trước Khi Viết Code
+
+**Mục tiêu:** Bảo đảm mọi phiên làm việc của AI bắt đầu từ cùng một baseline đã có trong repo, thay vì mỗi phiên tự tạo lại cấu hình khác nhau.  
+**Tệp cần kiểm tra và đồng bộ:**
+- `AGENTS.md` (file luật cho AI agent — nguồn quy ước duy nhất)
+- `requirements.txt`, `pyproject.toml` (pin phiên bản + cấu hình ruff/mypy/pytest)
+- `.gitignore`, `.env.example`
+- `tests/conftest.py`  
+**Tài liệu đính kèm:** `AGENTS.md`, `10_BE_Architecture.md`, `12_BE_Implementation_Guide.md`
+
+```text
+Bạn là Senior Backend Architect. Trước khi viết bất kỳ dòng code nghiệp vụ nào, hãy đọc AGENTS.md ở thư mục gốc dự án và thực hiện:
+
+1. Xác nhận môi trường chạy là cloud-only: Supabase PostgreSQL + pgvector và Cloudflare R2 dùng thống nhất cho mọi môi trường (dev/test/prod).
+   Không tạo Dockerfile/docker-compose để chạy PostgreSQL hay storage cục bộ; không cấu hình MinIO.
+2. Kiểm tra requirements.txt đã pin đủ thư viện (fastapi, uvicorn[standard], pydantic[email], pydantic-settings,
+   sqlalchemy[asyncio], asyncpg, psycopg2-binary, alembic, pgvector, python-jose[cryptography], passlib[bcrypt],
+   python-multipart, httpx, aiofiles, boto3, payos, pytest, pytest-asyncio, ruff, mypy) và bổ sung nếu thiếu.
+3. Kiểm tra .env.example có đủ DATABASE_URL, DATABASE_URL_SYNC, TEST_DATABASE_URL, TEST_DATABASE_URL_SYNC,
+   STORAGE_*, AI_*, PAYOS_*, SMTP_*, CORS_ORIGINS.
+4. Chạy ruff check và mypy trên khung dự án để xác nhận cấu hình trong pyproject.toml hoạt động.
+
+Tiêu chí nghiệm thu: `pip install -r requirements.txt`, `ruff check .` và `pytest -q` đều chạy được;
+khi chưa khai báo TEST_DATABASE_URL thì các test cần database tự động SKIP thay vì báo lỗi.
 ```
 
 ---
@@ -268,7 +296,7 @@ Bạn là Media & Pipeline Engineer. Dựa trên tài liệu 11_BE_AI_Pipeline_S
 
 1. Tạo app/adapters/storage.py:
    - Định nghĩa interface StorageAdapter (abstract class) với các phương thức: upload_file, upload_directory (cho thư mục HLS chứa m3u8 và ts), get_signed_url, delete_file.
-   - Hiện thực R2StorageAdapter dùng boto3 cấu hình tương thích S3 kết nối Cloudflare R2 ở production (biến STORAGE_*); endpoint có thể trỏ MinIO chỉ khi local testing. Service/worker không gọi boto3 trực tiếp, chỉ gọi qua Storage Adapter — thiết kế tổng quát để sau này thay bằng AWS S3 (hướng migration tương lai) mà không sửa business logic.
+   - Hiện thực R2StorageAdapter dùng boto3 cấu hình tương thích S3 kết nối Cloudflare R2 (biến STORAGE_*), dùng cho mọi môi trường. Service/worker không gọi boto3 trực tiếp, chỉ gọi qua Storage Adapter — thiết kế tổng quát để sau này thay bằng AWS S3 (hướng migration tương lai) mà không sửa business logic.
 
 2. Tạo app/adapters/ai/whisper.py:
    - Client gọi mô hình Whisper (qua AI Adapter) với tham số ngôn ngữ tiếng Việt (language="vi").
@@ -279,7 +307,7 @@ Bạn là Media & Pipeline Engineer. Dựa trên tài liệu 11_BE_AI_Pipeline_S
    - Bước 1 (transcode):
      + Cập nhật pipeline_steps (step='transcode', status='processing').
      + Dùng FFmpeg (subprocess hoặc ffmpeg-python) chuyển mã video thô thành chuẩn HLS đa biến thể (1080p, 720p, 480p) kèm file master.m3u8 và các file .ts.
-     + Upload toàn bộ thư mục HLS lên Cloudflare R2 (qua Storage Adapter; MinIO chỉ khi local testing).
+     + Upload toàn bộ thư mục HLS lên Cloudflare R2 (qua Storage Adapter).
      + Cập nhật hls_master_url trong bảng videos. Đánh dấu step 'transcode' completed.
    - Bước 2 (transcribe):
      + Cập nhật pipeline_steps (step='transcribe', status='processing').
@@ -297,7 +325,7 @@ Bạn là Media & Pipeline Engineer. Dựa trên tài liệu 11_BE_AI_Pipeline_S
 
 Hãy viết code xử lý file an toàn, dọn dẹp file rác trong khối finally và ghi log đầy đủ.
 
-Tiêu chí nghiệm thu bổ sung: mọi thao tác lưu trữ đều đi qua Storage Adapter (app/adapters/storage.py), không import boto3 trong service/worker; pipeline không tham chiếu AWS và chỉ dùng Cloudflare R2 ở production (MinIO giới hạn cho local testing).
+Tiêu chí nghiệm thu bổ sung: mọi thao tác lưu trữ đều đi qua Storage Adapter (app/adapters/storage.py), không import boto3 trong service/worker; pipeline không tham chiếu AWS và chỉ dùng Cloudflare R2 cho mọi môi trường (không MinIO, không storage cục bộ).
 ```
 
 ---

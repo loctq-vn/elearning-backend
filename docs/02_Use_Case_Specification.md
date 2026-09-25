@@ -957,7 +957,7 @@
 |------|-------|-----------|
 | 1 | Quản trị viên | Tại A-06 hoặc A-07, sử dụng vùng upload video (drag-and-drop hoặc click chọn file). |
 | 2 | Hệ thống | Validate file: kiểm tra định dạng (MP4, MOV, AVI, MKV, WEBM), dung lượng (≤ 5 GB), codec hợp lệ. |
-| 3 | Hệ thống | Bắt đầu upload file lên object storage **Cloudflare R2** qua Storage Adapter (môi trường dev cục bộ dùng MinIO chỉ để kiểm thử). Hiển thị thanh tiến trình upload (%). |
+| 3 | Hệ thống | Bắt đầu upload file lên object storage **Cloudflare R2** qua Storage Adapter, dùng thống nhất cho mọi môi trường (dev/test/prod). Hiển thị thanh tiến trình upload (%). |
 | 4 | Hệ thống | Upload hoàn tất → Lưu metadata video vào CSDL (filename, size, duration, storage URL). Cập nhật trạng thái: "Đã upload". |
 | 5 | Hệ thống | Tự động trigger pipeline xử lý video (UC-28): Upload ✓ → STT (khởi động) → Vector Indexing (chờ). |
 | 6 | Hệ thống | Hiển thị toast "Upload thành công. Pipeline xử lý đã bắt đầu." |

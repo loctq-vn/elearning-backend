@@ -437,7 +437,7 @@ erDiagram
 
 ### 7.1 Vị trí lưu trữ
 
-Véc-tơ nhúng được lưu trong bảng chunk_embeddings thuộc PostgreSQL có cài phần mở rộng pgvector `[Confirmed]`. Mỗi véc-tơ gắn với đúng một đoạn văn bản trong bảng lesson_chunks. Nội dung văn bản và véc-tơ số học được tách thành hai bảng để quản lý phiên bản độc lập, tránh phải sửa đổi hàng loạt bản ghi văn bản khi thay đổi mô hình nhúng `[Derived / Proposed]`. Tệp thô và luồng HLS lưu tại Cloudflare R2 — lưu trữ đối tượng chính thức duy nhất của dự án, phân phối qua mạng phân phối nội dung; MinIO chỉ dùng khi cần kiểm thử cục bộ trong môi trường phát triển và không nằm trong pipeline chính `[Confirmed — Chốt nội bộ]`, ghi chi tiết tại mục quyết định đã chốt.
+Véc-tơ nhúng được lưu trong bảng chunk_embeddings thuộc PostgreSQL có cài phần mở rộng pgvector `[Confirmed]`. Mỗi véc-tơ gắn với đúng một đoạn văn bản trong bảng lesson_chunks. Nội dung văn bản và véc-tơ số học được tách thành hai bảng để quản lý phiên bản độc lập, tránh phải sửa đổi hàng loạt bản ghi văn bản khi thay đổi mô hình nhúng `[Derived / Proposed]`. Tệp thô và luồng HLS lưu tại Cloudflare R2 — lưu trữ đối tượng chính thức duy nhất của dự án, phân phối qua mạng phân phối nội dung và dùng thống nhất cho mọi môi trường (dev/test/prod); hệ thống không dùng lưu trữ đối tượng cục bộ `[Confirmed — Chốt nội bộ]`, ghi chi tiết tại mục quyết định đã chốt.
 
 ### 7.2 Số chiều và độ đo khoảng cách
 
@@ -509,6 +509,29 @@ Các ràng buộc kiểm tra gồm họ tên từ 2 đến 100 ký tự, email t
 
 Nhóm xác thực sử dụng bảng users, otp_codes và refresh_tokens cho đăng ký, xác minh OTP, đăng nhập, làm mới token và đăng xuất `[Confirmed]`. Hồ sơ người dùng đọc và cập nhật từ bảng users. Nhóm khóa học sử dụng bảng courses, categories, chapters, lessons, enrollments và lesson_progress cho duyệt danh sách, xem chi tiết, thư viện cá nhân và tiếp tục học. Chi tiết bài giảng kết hợp lessons, videos, transcripts, transcript_segments và chapters để trả về đường dẫn phát, phụ đề và cấu trúc chương. Nhóm video và AI sử dụng videos, pipeline_steps, transcripts, lesson_chunks, chunk_embeddings, ai_qa_logs và ai_summaries cho tải lên, theo dõi pipeline, hỏi đáp, phản hồi và tóm tắt. Nhóm bài tập sử dụng questions, question_options, exams, exam_questions, exercise_attempts và attempt_answers cho lấy đề, nộp bài và xem kết quả. Nhóm ghi chú sử dụng bảng notes. Nhóm thanh toán dự kiến sử dụng bảng orders và enrollments. Nhóm thông báo sử dụng bảng notifications.
 
+### 11.1 Ma Trận Truy Vết (Quy Tắc Nghiệp Vụ ↔ Use Case ↔ Nhóm API ↔ Bảng Dữ Liệu)
+
+| Mã BR | Tên quy tắc | Use case liên quan | Nhóm API (hợp đồng `08`) | Bảng dữ liệu chính |
+|---|---|---|---|---|
+| BR-01 | Định danh và xác thực tài khoản duy nhất | UC-01, UC-02 | 1.1, 1.4 | users |
+| BR-02 | Kích hoạt tài khoản qua mã OTP | UC-01, UC-03 | 1.1, 1.2, 1.3, 1.7, 1.8 | users, otp_codes |
+| BR-03 | Cơ chế phiên làm việc phân quyền | UC-02, UC-20, UC-23, UC-38 | 1.4, 1.5, 1.6 | refresh_tokens, users |
+| BR-04 | Quyền hạn truy cập nội dung bài giảng | UC-05..UC-08, UC-17 | 2.5, 2.6, 2.7, 2.8 | enrollments, lessons, courses |
+| BR-05 | Xác nhận thanh toán tự động qua Webhook | UC-07 | 8.1..8.4 | orders, enrollments |
+| BR-06 | Điều kiện xuất bản khóa học | UC-25, UC-26 | 2.9..2.13 | courses, chapters, lessons, videos |
+| BR-07 | Quy trình xử lý video bất đồng bộ | UC-27, UC-28 | 9.1..9.5 | videos, pipeline_steps |
+| BR-08 | Đồng bộ hóa dữ liệu khi chỉnh sửa phụ đề | UC-29 | 9.6 | transcripts, lesson_chunks, chunk_embeddings |
+| BR-09 | Quyền sở hữu khóa học sau khi ghi danh | UC-06, UC-07, UC-17 | 2.6, 2.8 | enrollments |
+| BR-10 | Giới hạn tri thức của AI Trợ giảng | UC-10 | 4.1, 4.2, 4.4 | lesson_chunks, chunk_embeddings, ai_qa_logs |
+| BR-11 | Phạm vi tóm tắt bài giảng của AI | UC-11 | 5.1 | ai_summaries, transcripts, system_settings |
+| BR-12 | Lưu trữ và khôi phục vị trí xem video | UC-08, UC-16 | 2.2, 3.1, 3.2 | lesson_progress |
+| BR-13 | Cơ chế chấm điểm bài kiểm tra | UC-14, UC-15 | 6.1..6.4 | exams, questions, exercise_attempts, attempt_answers |
+| BR-14 | Tính riêng tư của ghi chú cá nhân | UC-13 | 7.1..7.4 | notes |
+| BR-15 | Đồng bộ phụ đề theo thời gian thực | UC-09 | 2.7, 9.6 | transcript_segments |
+| BR-16 | Chính sách hủy đơn thanh toán tự động | UC-07, UC-33 | 8.1, 8.2, 8.3 | orders |
+
+Mỗi dòng trong ma trận trên phải có ít nhất một test tương ứng ở tầng tích hợp. Nhóm thông báo (10.x) và nhóm báo cáo (12.x) không gắn với quy tắc nghiệp vụ bắt buộc nào mà phục vụ hiển thị và thống kê.
+
 ---
 
 ## 12. Di Trú Lược Đồ (Migration)
@@ -523,10 +546,11 @@ Công cụ Alembic được sử dụng để quản lý di trú lược đồ c
 2. **DE-02 Tên bước pipeline [Confirmed — Chốt theo hợp đồng 08]:** Dùng 4 bước gồm tải lên (upload), chuyển mã (transcode), phiên âm (transcribe) và lập chỉ mục (index) cho API và cơ sở dữ liệu. Hợp đồng `08` hiện ghi tên bước phiên âm là `stt`, cách gọi chính thức thống nhất là phiên âm và ánh xạ sang `stt` khi cần tương thích API. Bước chuyển mã tương ứng trạng thái xử lý HLS trong tài liệu `00`, bước phiên âm tương ứng trạng thái xử lý nhận dạng giọng nói, bước lập chỉ mục tương ứng trạng thái xử lý lập chỉ mục.
 3. **DE-03 Tên trạng thái hoàn tất và thanh toán [Confirmed — Chốt theo hợp đồng 08]:** Tầng dữ liệu và API dùng giá trị hoàn tất cho video và giá trị đã thanh toán cho đơn hàng. Tên nghiệp vụ tương đương trong tài liệu `00` là sẵn sàng và thành công, chỉ dùng cho mô tả nghiệp vụ và hiển thị.
 4. **DE-04 Bảng chương học [Confirmed — Chốt giữ bảng]:** Giữ bảng chương học trong lược đồ để hỗ trợ phân cấp nội dung, sắp xếp bài giảng và tóm tắt theo chương. Hợp đồng `08` hiện chưa có đối tượng chương riêng nên Backend tự dựng cây chương từ bài giảng khi trả chi tiết khóa học. Lộ trình bổ sung đối tượng chương vào hợp đồng được ghi nhận khi giao diện cần màn hình chương riêng.
-5. **DE-05 Kiến trúc lưu trữ [Confirmed — Chốt nội bộ]:** Cloud stack chính thức của dự án gồm Supabase PostgreSQL + pgvector cho cơ sở dữ liệu và Cloudflare R2 cho lưu trữ đối tượng. Cloudflare R2 là lưu trữ chính thức duy nhất cho tệp video thô, luồng HLS, ảnh thu nhỏ và ảnh đại diện, phân phối qua mạng phân phối nội dung; hạn mức miễn phí mỗi tháng gồm 10GB lưu trữ chuẩn, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra. MinIO chỉ dùng để kiểm thử cục bộ khi phát triển, không phải lưu trữ chính thức và không nằm trong pipeline chính. AWS không được đưa vào pipeline hiện tại, chỉ ghi nhận là hướng migration tương lai thông qua bộ điều hợp lưu trữ. Việc chuyển đổi nhà cung cấp lưu trữ thực hiện qua biến môi trường địa chỉ lưu trữ và bộ điều hợp lưu trữ, không sửa logic nghiệp vụ.
+5. **DE-05 Kiến trúc lưu trữ [Confirmed — Chốt nội bộ]:** Cloud stack chính thức của dự án gồm Supabase PostgreSQL + pgvector cho cơ sở dữ liệu và Cloudflare R2 cho lưu trữ đối tượng. Cloudflare R2 là lưu trữ chính thức duy nhất cho tệp video thô, luồng HLS, ảnh thu nhỏ và ảnh đại diện, phân phối qua mạng phân phối nội dung; hạn mức miễn phí mỗi tháng gồm 10GB lưu trữ chuẩn, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra. Không có lưu trữ đối tượng cục bộ: mọi môi trường (dev/test/prod) dùng chung Cloudflare R2, không dùng MinIO hay bất kỳ storage cục bộ nào. AWS không được đưa vào pipeline hiện tại, chỉ ghi nhận là hướng migration tương lai thông qua bộ điều hợp lưu trữ. Việc chuyển đổi nhà cung cấp lưu trữ thực hiện qua biến môi trường địa chỉ lưu trữ và bộ điều hợp lưu trữ, không sửa logic nghiệp vụ.
 6. **DE-06 Phạm vi giai đoạn 2 [TBD]:** Đánh giá sao, slide bài giảng, báo cáo phân tích nâng cao, giám sát nâng cao và nhận dạng giọng nói tự triển khai thuộc giai đoạn 2. Phạm vi Đồ án 1 chỉ giữ thống kê câu hỏi trí tuệ nhân tạo và doanh thu cơ bản đã có trong hợp đồng.
 7. **DE-07 Ràng buộc lập chỉ mục lại [Confirmed — Chốt ngày 16/09/2026]:** Bảng `lesson_chunks` thêm cột `transcript_version` và cờ `is_active`; ràng buộc duy nhất đổi thành bộ (lesson_id, transcript_version, chunk_config_version, chunk_index) để chunk thế hệ mới và cũ cùng tồn tại khi lập chỉ mục lại mà không gián đoạn phục vụ. Hợp đồng `08` đồng bộ: loại bỏ enum trạng thái pipeline 7 giá trị tại đối tượng lesson, tham chiếu về `overall_status` và `PipelineStep`.
 8. **DE-08 Bổ sung hợp đồng [Confirmed — Chốt ngày 16/09/2026]:** Hợp đồng `08` bổ sung endpoint webhook PayOS (`POST /api/webhooks/payos`, xác thực HMAC, idempotent), endpoint phản hồi AI (`POST /api/ai-messages/{message_id}/feedback`), trường `chunk_id` trong `AISource`, và quy ước response lỗi tập trung. Kiến trúc `10` ghi nhận quy tắc idempotency và tính nguyên tử của webhook.
+9. **DE-09 Hằng số vận hành [Confirmed — Chốt nội bộ]:** Các giá trị dùng chung được chốt tại một nguồn duy nhất là bảng `system_settings`: phiên bản nhúng hiệu lực v1 (1536 chiều, cosine), Top-K bằng 5, ngưỡng tương đồng 0.72, cửa sổ tăng trọng thời gian 120 giây, hạn mức hỏi đáp 50 câu/ngày/học viên và hạn mức tóm tắt 10 lượt/ngày/học viên. Kích thước chunk 500 token với độ chồng lấp 80–100 token. Token truy cập 900 giây; token làm mới 7 ngày cho di động và 24 giờ cho quản trị viên; OTP 300 giây với tối đa 5 lần nhập sai trong 15 phút; đơn hàng hết hạn sau 15 phút. Giới hạn tải lên gồm mỗi phần dưới 200MB và toàn bộ video tối đa 5GB. Thời gian chờ mô hình AI là 30 giây cho mỗi lần gọi và tối đa 60 giây cho cả chuỗi chính kèm dự phòng. Trang quản trị polling trạng thái pipeline mỗi 10 giây, máy khách polling trạng thái thanh toán mỗi 3 giây.
 
 ---
 

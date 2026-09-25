@@ -1,0 +1,38 @@
+# Môi trường & bí mật
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Kiểm thử & công cụ
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Media & tệp tạm của pipeline
+*.wav
+*.ts
+*.m3u8
+media/
+tmp/
+storage/

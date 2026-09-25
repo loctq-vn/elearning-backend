@@ -60,7 +60,7 @@ Client → FastAPI → Supabase PostgreSQL/pgvector + Cloudflare R2 → Worker �
 Quy định đi kèm cloud stack chốt:
 
 - Supabase và Cloudflare R2 là stack Cloud chính thức của dự án ở giai đoạn hiện tại.
-- MinIO chỉ được dùng cho mục đích kiểm thử cục bộ khi phát triển, không phải lưu trữ chính thức và không xuất hiện trong pipeline chính.
+- Không có cơ sở dữ liệu hay lưu trữ đối tượng cục bộ: mọi môi trường (dev/test/prod) dùng chung Supabase PostgreSQL + pgvector và Cloudflare R2.
 - AWS không được đưa vào pipeline hiện tại; AWS chỉ được ghi nhận là hướng migration trong tương lai thông qua các bộ điều hợp (Storage Adapter, AI Adapter), xem DE-06.
 - Mọi truy cập lưu trữ đối tượng và mô hình bên ngoài đi qua bộ điều hợp biên có ranh giới rõ ràng để business logic không phụ thuộc nhà cung cấp cụ thể.
 
@@ -70,7 +70,7 @@ Backend sử dụng Python với FastAPI cho tầng API, Pydantic v2 cho kiểm 
 
 ### 3.2 Cơ sở dữ liệu và lưu trữ
 
-PostgreSQL kết hợp pgvector là cơ sở dữ liệu chính, triển khai quản trị trên Supabase `[Confirmed — Chốt nội bộ]`. Tệp video, luồng HLS, ảnh thu nhỏ và ảnh đại diện lưu trên Cloudflare R2, phân phối qua mạng phân phối nội dung `[Confirmed — Chốt nội bộ]`. MinIO chỉ dùng để kiểm thử cục bộ khi phát triển, không phải lưu trữ chính thức và không nằm trong pipeline chính. Mọi thao tác lưu trữ đi qua bộ điều hợp lưu trữ (Storage Adapter) và biến môi trường cấu hình, không sửa mã nghiệp vụ khi thay đổi nhà cung cấp; AWS không nằm trong pipeline hiện tại và chỉ được ghi nhận là hướng migration tương lai.
+PostgreSQL kết hợp pgvector là cơ sở dữ liệu chính, triển khai quản trị trên Supabase `[Confirmed — Chốt nội bộ]`. Tệp video, luồng HLS, ảnh thu nhỏ và ảnh đại diện lưu trên Cloudflare R2, phân phối qua mạng phân phối nội dung `[Confirmed — Chốt nội bộ]`. Không có lưu trữ đối tượng cục bộ; mọi môi trường (dev/test/prod) dùng chung Cloudflare R2. Mọi thao tác lưu trữ đi qua bộ điều hợp lưu trữ (Storage Adapter) và biến môi trường cấu hình, không sửa mã nghiệp vụ khi thay đổi nhà cung cấp; AWS không nằm trong pipeline hiện tại và chỉ được ghi nhận là hướng migration tương lai.
 
 ### 3.3 Xử lý video và tải lên
 
@@ -147,7 +147,7 @@ Backend được chia thành các mô-đun gồm xác thực, người dùng, da
 
 ### 6.2 Bố cục thư mục đề xuất
 
-Bố cục gồm điểm khởi động ứng dụng, cấu hình, bảo mật, phụ thuộc dùng chung, giới hạn tần suất, lưu trữ và thư điện tử ở tầng lõi. Mỗi mô-đun nghiệp vụ có bốn thành phần tương ứng. Thư mục worker chứa các tác vụ tải lên, chuyển mã, phiên âm, lập chỉ mục, lập chỉ mục lại và hết hạn đơn hàng. Thư mục bộ điều hợp AI chứa các trình bọc Whisper, nhúng, mô hình ngôn ngữ và mẫu nhắc. Thư mục cơ sở dữ liệu chứa khai báo nền, phiên làm việc, mô hình và tập lệnh di trú. Môi trường phát triển dùng container gồm API và PostgreSQL có pgvector; MinIO chỉ dùng làm container kiểm thử lưu trữ cục bộ, Redis từ xa dành cho giai đoạn mở rộng `[Derived / Proposed]`.
+Bố cục gồm điểm khởi động ứng dụng, cấu hình, bảo mật, phụ thuộc dùng chung, giới hạn tần suất, lưu trữ và thư điện tử ở tầng lõi. Mỗi mô-đun nghiệp vụ có bốn thành phần tương ứng. Thư mục worker chứa các tác vụ tải lên, chuyển mã, phiên âm, lập chỉ mục, lập chỉ mục lại và hết hạn đơn hàng. Thư mục bộ điều hợp AI chứa các trình bọc Whisper, nhúng, mô hình ngôn ngữ và mẫu nhắc. Thư mục cơ sở dữ liệu chứa khai báo nền, phiên làm việc, mô hình và tập lệnh di trú. Môi trường phát triển chạy API cục bộ và kết nối trực tiếp tới Supabase PostgreSQL + pgvector cùng Cloudflare R2 trên cloud; không dùng container cơ sở dữ liệu hay lưu trữ cục bộ, Redis từ xa dành cho giai đoạn mở rộng `[Derived / Proposed]`.
 
 Ví dụ bố cục triển khai:
 
@@ -254,13 +254,13 @@ Các công việc gồm tải lên, chuyển mã HLS, phiên âm, lập chỉ m�
 
 ### 8.3 Kiến trúc lưu trữ
 
-PostgreSQL lưu toàn bộ dữ liệu quan hệ và véc-tơ trên Supabase `[Confirmed — Chốt nội bộ]`. Lưu trữ đối tượng chính thức là Cloudflare R2, lưu tệp thô, các tệp HLS, ảnh thu nhỏ và ảnh đại diện, phân phối qua mạng phân phối nội dung; hạn mức miễn phí mỗi tháng gồm 10GB lưu trữ chuẩn, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra `[Confirmed — Chốt nội bộ]`. MinIO chỉ dùng để kiểm thử cục bộ khi phát triển và không xuất hiện trong pipeline chính. Transcript, đoạn văn bản và véc-tơ lưu trong PostgreSQL để đảm bảo toàn vẹn và truy xuất trong cùng một giao dịch logic.
+PostgreSQL lưu toàn bộ dữ liệu quan hệ và véc-tơ trên Supabase `[Confirmed — Chốt nội bộ]`. Lưu trữ đối tượng chính thức là Cloudflare R2, lưu tệp thô, các tệp HLS, ảnh thu nhỏ và ảnh đại diện, phân phối qua mạng phân phối nội dung; hạn mức miễn phí mỗi tháng gồm 10GB lưu trữ chuẩn, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra `[Confirmed — Chốt nội bộ]`. Không có lưu trữ đối tượng cục bộ; mọi môi trường (dev/test/prod) dùng chung Cloudflare R2. Transcript, đoạn văn bản và véc-tơ lưu trong PostgreSQL để đảm bảo toàn vẹn và truy xuất trong cùng một giao dịch logic.
 
 Mọi thao tác với lưu trữ đối tượng đi qua một interface bộ điều hợp lưu trữ (Storage Adapter) duy nhất với các thao tác chuẩn gồm tải tệp lên, tải thư mục HLS lên, cấp đường dẫn truy cập có chữ ký và xóa tệp. Tầng dịch vụ và worker chỉ gọi interface này, không dùng SDK của nhà cung cấp trực tiếp và không giữ giao dịch cơ sở dữ liệu mở trong lúc chờ phản hồi mạng. Việc thay đổi nhà cung cấp lưu trữ về sau chỉ cần viết bộ điều hợp mới và đổi biến môi trường, không sửa logic nghiệp vụ.
 
 ### 8.4 Tích hợp AI và thanh toán
 
-Backend giao tiếp với nhà cung cấp AI qua bộ điều hợp với thời gian chờ 30 giây, mẫu nhắc được quản lý phiên bản và tóm tắt được lưu bộ nhớ đệm theo phiên bản transcript `[Derived / Proposed]`. Giá trị tham số truy xuất (Top-K, ngưỡng, tăng trọng thời gian) và giới hạn dung lượng lấy từ mục quyết định đã chốt của tài liệu `09` và hợp đồng `08`; tài liệu này không định nghĩa lại.
+Backend giao tiếp với nhà cung cấp AI qua bộ điều hợp với thời gian chờ 30 giây, mẫu nhắc được quản lý phiên bản và tóm tắt được lưu bộ nhớ đệm theo phiên bản transcript `[Derived / Proposed]`. Giá trị tham số truy xuất (Top-K, ngưỡng, tăng trọng thời gian) và hạn mức hỏi đáp/tóm tắt lấy từ bảng `system_settings` tại mục 5.5 và được tổng hợp lại tại mục 13 của tài liệu `09`; giới hạn dung lượng tải lên lấy từ hợp đồng `08`. Tài liệu này không định nghĩa lại các giá trị đó.
 
 Bộ điều hợp AI được tổ chức thành interface AI Adapter duy nhất gồm ba trình bọc: phiên âm (Whisper), nhúng (OpenAI text-embedding-3-small, 1536 chiều, phiên bản v1) và mô hình ngôn ngữ (GPT-4o-mini chính, Gemini Flash dự phòng theo chính sách thử mô hình chính 1 lần rồi fallback đúng 1 lần, tổng thời gian không vượt quá 60 giây). Tầng dịch vụ và worker chỉ gọi interface, không gọi SDK của nhà cung cấp trực tiếp, nên việc thay đổi nhà cung cấp AI về sau không sửa business logic `[Confirmed — Chốt nội bộ]`.
 
@@ -287,7 +287,7 @@ Webhook PayOS xác thực bằng chữ ký HMAC trên payload gốc, kiểm tra 
 1. DE-01 Giới hạn dung lượng tải lên [Confirmed — Chốt theo hợp đồng 08]: Mỗi yêu cầu tải lên nhiều phần tối đa dưới 200MB. Toàn bộ video hoàn chỉnh tối đa 5GB. Video vượt 200MB được cắt thành nhiều phần và tải lên có thể tiếp tục.
 2. DE-02 Tên bước pipeline [Confirmed — Chốt theo hợp đồng 08]: Dùng 4 bước gồm tải lên (upload), chuyển mã (transcode), phiên âm (transcribe) và lập chỉ mục (index) cho API và cơ sở dữ liệu. Hợp đồng 08 hiện ghi tên bước phiên âm là stt, ánh xạ sang phiên âm khi cần tương thích API. Bước chuyển mã tương ứng xử lý HLS, bước phiên âm tương ứng xử lý nhận dạng giọng nói, bước lập chỉ mục tương ứng xử lý lập chỉ mục trong tài liệu 00.
 3. DE-03 Tên trạng thái [Confirmed — Chốt theo hợp đồng 08]: Tầng dữ liệu và API dùng hoàn tất cho video và đã thanh toán cho đơn hàng. Tên nghiệp vụ sẵn sàng và thành công chỉ dùng mô tả và hiển thị.
-4. DE-04 Cloud stack chính thức [Confirmed — Chốt nội bộ]: Supabase PostgreSQL + pgvector là cơ sở dữ liệu chính thức và Cloudflare R2 là lưu trữ đối tượng chính thức duy nhất cho tệp thô, HLS, ảnh thu nhỏ và ảnh đại diện với hạn mức miễn phí 10GB lưu trữ, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra. MinIO chỉ dùng để kiểm thử cục bộ khi phát triển, không phải lưu trữ chính thức và không nằm trong pipeline chính. Mọi thao tác lưu trữ đi qua Storage Adapter và mọi truy cập mô hình AI đi qua AI Adapter để business logic không phụ thuộc nhà cung cấp.
+4. DE-04 Cloud stack chính thức [Confirmed — Chốt nội bộ]: Supabase PostgreSQL + pgvector là cơ sở dữ liệu chính thức và Cloudflare R2 là lưu trữ đối tượng chính thức duy nhất cho tệp thô, HLS, ảnh thu nhỏ và ảnh đại diện với hạn mức miễn phí 10GB lưu trữ, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra. Không có lưu trữ đối tượng cục bộ: mọi môi trường (dev/test/prod) dùng chung Cloudflare R2. Mọi thao tác lưu trữ đi qua Storage Adapter và mọi truy cập mô hình AI đi qua AI Adapter để business logic không phụ thuộc nhà cung cấp.
 5. DE-05 Phạm vi giai đoạn 2 [TBD]: Giám sát nâng cao, đánh giá sao, slide bài giảng và báo cáo phân tích nâng cao thuộc giai đoạn 2.
 6. DE-06 Hướng migration tương lai [TBD]: AWS được ghi nhận là hướng mở rộng trong tương lai, ví dụ AWS S3 cho lưu trữ đối tượng. AWS không được đưa vào pipeline hiện tại; khi dự án thực sự cần chuyển đổi, chỉ bổ sung bộ điều hợp mới cho Storage Adapter và đổi biến môi trường mà không sửa logic nghiệp vụ.
 

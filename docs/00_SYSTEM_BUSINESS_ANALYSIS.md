@@ -583,7 +583,7 @@ Thông tin thực hiện đồ án được xác nhận chính thức từ Đề
 - **Frontend Quản trị:** Next.js (React), TypeScript, Tailwind CSS.
 - **Backend API:** Python FastAPI (hiệu năng cao, tương thích trực tiếp các thư viện AI tiên tiến).
 - **Cơ sở dữ liệu:** PostgreSQL (lưu trữ quan hệ người dùng, khóa học, bài tập) kết hợp extension `pgvector` (lưu trữ và tìm kiếm vector ngữ nghĩa phục vụ RAG), triển khai trên **Supabase** — nền tảng Cloud chính thức của dự án.
-- **Lưu trữ đối tượng (Object Storage):** **Cloudflare R2** — lưu trữ tệp video thô, luồng HLS, thumbnail và ảnh đại diện. Môi trường phát triển cục bộ có thể dùng MinIO chạy Docker chỉ cho mục đích kiểm thử.
+- **Lưu trữ đối tượng (Object Storage):** **Cloudflare R2** — lưu trữ tệp video thô, luồng HLS, thumbnail và ảnh đại diện. Dùng thống nhất cho mọi môi trường (dev/test/prod); hệ thống không dùng lưu trữ đối tượng cục bộ.
 - **Công nghệ AI & Xử lý giọng nói:**
   - Speech-to-Text: Whisper.
   - LLM phục vụ Hỏi-Đáp & Tóm tắt: GPT-4o-mini (chính), Gemini Flash (dự phòng fallback).
@@ -640,7 +640,7 @@ Các vấn đề dưới đây cần được nhóm sinh viên thảo luận và
 
 4. **Giới hạn số lượng câu hỏi AI (Rate Limit) cho mỗi học viên:**
    - *Vấn đề:* Do việc gọi API LLM (GPT-4o-mini/Gemini Flash) có phát sinh chi phí token, hệ thống có cần thiết lập hạn mức số câu hỏi tối đa một học viên được hỏi mỗi ngày hay không?
-   - *Phương án đề xuất:* Cần cấu hình một biến số giới hạn (ví dụ tối đa 30 câu hỏi AI/ngày/học viên) trong cài đặt hệ thống để tránh tình trạng spam API làm cạn kiệt ngân sách đồ án.
+   - *Đã chốt:* Giới hạn **tối đa 50 câu hỏi AI/ngày/học viên** và **10 lượt tóm tắt/ngày/học viên**, cấu hình trong bảng `system_settings` (xem tài liệu `09`); vượt hạn mức trả về `429 AI_QUOTA_EXCEEDED` kèm số lượt còn lại. Giá trị 30 nêu trước đây không còn hiệu lực.
 
 5. **Mức độ cam kết của module Báo cáo phân tích hành vi học viên:**
    - *Vấn đề:* Để có báo cáo biểu đồ bỏ dở video hay độ thu hút người xem đòi hỏi phải xây dựng hệ thống thu thập sự kiện liên tục (Telemetry logging). Nếu ở Sprint 7 thời gian gấp, module này có thể tinh giản thành các con số thống kê cơ bản trên Dashboard được không?

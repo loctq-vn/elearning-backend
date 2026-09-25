@@ -68,7 +68,7 @@ Client → FastAPI → Supabase PostgreSQL/pgvector + Cloudflare R2 → Worker �
 
 Quy định đi kèm:
 - Supabase và Cloudflare R2 là stack Cloud chính thức của dự án; không viết lại theo dạng "Supabase hoặc AWS", "R2 hoặc MinIO".
-- MinIO chỉ được dùng cho mục đích local testing, không phải storage chính và không nằm trong pipeline chính.
+- Cloud-mode 100%: mọi môi trường (dev/test/prod) dùng chung Supabase PostgreSQL + pgvector và Cloudflare R2; không tạo cơ sở dữ liệu hay lưu trữ cục bộ (không container pgvector, không MinIO).
 - AWS không được đưa vào pipeline hiện tại; chỉ ghi nhận là hướng migration trong tương lai thông qua Storage Adapter/AI Adapter (xem `10_BE_Architecture.md` DE-06).
 
 ### 0.1 Cài đặt môi trường phát triển cục bộ (Local Dev)
@@ -76,8 +76,8 @@ Quy định đi kèm:
 - **FFmpeg:** Cài đặt FFmpeg trên máy chủ/máy dev, cấu hình đường dẫn `ffmpeg` và `ffprobe` vào biến `PATH` hệ thống.
 - **PostgreSQL & pgvector:**
   - *Cloud (chính thức):* Tạo dự án mới trên **Supabase** (gói Free). Supabase đã tích hợp sẵn PostgreSQL 15+ và cho phép bật extension `vector` chỉ với 1 click trong mục Database -> Extensions.
-  - *Local Dev (dev offline):* Chạy container image `pgvector/pgvector:pg16` để lập trình offline; môi trường lược đồ tương đương Supabase.
-- **Lưu trữ đối tượng (Object Storage):** **Cloudflare R2** là storage chính thức duy nhất (miễn phí băng thông ra - Egress Free, 10GB lưu trữ miễn phí), dùng thống nhất cho cả dev, staging và production. **MinIO** chạy Docker (`minio/minio`) chỉ dùng khi cần kiểm thử cục bộ (local testing), không phải storage chính.
+  - Mọi môi trường kết nối trực tiếp tới Supabase này (kể cả khi lập trình cục bộ); không chạy PostgreSQL cục bộ hay container pgvector.
+- **Lưu trữ đối tượng (Object Storage):** **Cloudflare R2** là storage chính thức duy nhất (miễn phí băng thông ra - Egress Free, 10GB lưu trữ miễn phí), dùng thống nhất cho mọi môi trường (dev/test/staging/production). Không dùng storage cục bộ.
 - **Dịch vụ tích hợp bên ngoài:**
   - **OpenAI API Key** (dùng `text-embedding-3-small` 1536 chiều và `gpt-4o-mini`).
   - **Google Gemini API Key** (dùng `gemini-1.5-flash` làm mô hình fallback).
@@ -95,16 +95,19 @@ SECRET_KEY=your-super-secret-jwt-key-min-32-chars
 ACCESS_TOKEN_EXPIRE_SECONDS=900       # 15 phút (BR-03)
 REFRESH_TOKEN_EXPIRE_DAYS=7          # 7 ngày cho Mobile
 
-# Database (Supabase PostgreSQL + pgvector — chính thức; container pgvector local chỉ cho dev offline)
+# Database (Supabase PostgreSQL + pgvector — cloud chính thức, dùng cho mọi môi trường)
 DATABASE_URL=postgresql+asyncpg://postgres:your-password@db.supabase.co:5432/postgres
 DATABASE_URL_SYNC=postgresql://postgres:your-password@db.supabase.co:5432/postgres # Dùng cho Alembic
+# Database PHỤC VỤ TEST (tùy chọn): chỉ điền khi muốn chạy test tầng dữ liệu. Nếu để trống, các test cần DB sẽ tự động SKIP.
+TEST_DATABASE_URL=postgresql+asyncpg://postgres:your-password@db.supabase.co:5432/postgres
+TEST_DATABASE_URL_SYNC=postgresql://postgres:your-password@db.supabase.co:5432/postgres
 
-# Cloudflare R2 Storage (chính thức) — MinIO chỉ dùng cho local testing
-STORAGE_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com  # Local testing (MinIO): http://localhost:9000
+# Cloudflare R2 Storage (cloud chính thức, dùng cho mọi môi trường)
+STORAGE_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
 STORAGE_ACCESS_KEY=your-access-key
 STORAGE_SECRET_KEY=your-secret-key
 STORAGE_BUCKET_NAME=elearning-media
-STORAGE_PUBLIC_BASE_URL=http://localhost:9000/elearning-media
+STORAGE_PUBLIC_BASE_URL=https://media.yourdomain.com
 
 # AI Services
 OPENAI_API_KEY=sk-...
@@ -175,7 +178,7 @@ app/
 │   ├── reindex.py              # Chunking & Vector re-indexing
 │   └── order_expiry.py         # Quét đơn hết hạn 15 phút
 └── adapters/                   # Tích hợp dịch vụ biên ngoài
-    ├── storage.py              # Storage Adapter: Cloudflare R2 (chính thức); MinIO chỉ cho local testing (upload, signed URL)
+    ├── storage.py              # Storage Adapter: Cloudflare R2 (upload, signed URL), dùng cho mọi môi trường
     ├── mailer.py               # Gửi email OTP
     ├── payos.py                # Wrapper SDK PayOS, tạo QR VietQR
     └── ai/
@@ -204,7 +207,7 @@ Cloud stack hiện tại đã chốt là Supabase + Cloudflare R2, nhưng toàn 
 
 1. **Storage Adapter (`app/adapters/storage.py`):**
    - Định nghĩa interface (abstract class) `StorageAdapter` với các phương thức chuẩn: `upload_file`, `upload_directory` (cho thư mục HLS chứa `m3u8`/`ts`), `get_signed_url`, `delete_file`.
-   - Hiện thực `R2StorageAdapter` (boto3 cấu hình endpoint Cloudflare R2 qua biến `STORAGE_*`) làm adapter mặc định. Có thể viết `MinIOStorageAdapter` chỉ cho local testing và sau này `S3StorageAdapter` cho AWS — hướng migration tương lai, không đưa vào pipeline hiện tại.
+   - Hiện thực `R2StorageAdapter` (boto3 cấu hình endpoint Cloudflare R2 qua biến `STORAGE_*`) là adapter lưu trữ duy nhất của dự án, dùng cho mọi môi trường. Nếu sau này cần chuyển sang AWS S3 (hướng migration tương lai, không dùng ở giai đoạn hiện tại), chỉ viết thêm adapter mới mà không sửa business logic.
    - Service/Worker chỉ inject `StorageAdapter` qua Dependency Injection, không import boto3 trực tiếp và không giữ transaction DB mở khi chờ phản hồi mạng.
 2. **AI Adapter (`app/adapters/ai/`):**
    - `whisper.py` (STT), `embeddings.py` (text-embedding-3-small, 1536 chiều), `llm.py` (GPT-4o-mini + fallback Gemini Flash: thử mô hình chính 1 lần, lỗi 429/503/timeout thì fallback đúng 1 lần, tổng ≤ 60s).
@@ -320,7 +323,7 @@ Tạo đầy đủ 27 bảng trong thư mục `app/db/models/`:
 
 ### 6.1 Upload video dung lượng lớn (Resumable Upload)
 - Hỗ trợ tải lên từng phần (<200MB/chunk, tối đa 5GB/video) theo quyết định `DE-01`.
-- Khi các phần tải lên hoàn tất, ghép file và lưu bản gốc vào Cloudflare R2 qua Storage Adapter (local testing dùng MinIO).
+- Khi các phần tải lên hoàn tất, ghép file và lưu bản gốc vào Cloudflare R2 qua Storage Adapter.
 - Tạo bản ghi `videos` ở trạng thái `uploading` $\rightarrow$ `uploaded`, đồng thời khởi tạo 4 bản ghi `pipeline_steps`: `upload`, `transcode`, `transcribe`, `index` ở trạng thái `pending`.
 
 ### 6.2 Worker chuyển mã HLS bằng FFmpeg (`workers/video_pipeline.py`)
@@ -408,6 +411,48 @@ Hiện thực hàm xử lý cho endpoint `POST /api/lessons/{lesson_id}/ask`:
 
 ---
 
+### 8.3 Xác thực chữ ký Webhook PayOS (chi tiết bắt buộc)
+- **Thuật toán:** HMAC-SHA256 trên một chuỗi dữ liệu được sắp xếp theo thứ tự bảng chữ cái của tên trường, ghép dạng `key=value` và nối bằng `&`, dùng khóa `PAYOS_CHECKSUM_KEY`; so sánh với trường `signature` trong payload. Khuyến nghị dùng hàm xác thực của SDK `payos` (`verify_payment_webhook`) thay vì tự cài đặt lại.
+- **Đọc raw body** trước khi parse JSON; không dựng lại chuỗi chữ ký từ object đã parse vì thứ tự trường và định dạng số có thể lệch.
+- **Chống phát lại:** lưu lại `orderCode` kèm mã giao dịch của nhà cung cấp đã xử lý; nếu trùng thì bỏ qua và trả 200.
+- **Thứ tự xử lý bắt buộc:** (1) xác thực chữ ký → (2) kiểm tra idempotency → (3) giao dịch nguyên tử đổi đơn sang `paid` và tạo bản ghi `enrollments` → (4) trả HTTP 200. Không gọi dịch vụ ngoài trong lúc mở transaction.
+- Chỉ cho phép chuyển `pending` → `paid`. Đơn đã `expired` hoặc `cancelled` thì ghi log và trả 200, không tạo ghi danh.
+- Chữ ký sai → trả `401`, ghi log cảnh báo và không tiết lộ chi tiết lỗi ra ngoài.
+
+### 8.4 Seed data cho môi trường phát triển
+Script `scripts/seed.py` (idempotent — chạy lại nhiều lần không tạo dữ liệu trùng):
+1. Tài khoản quản trị viên bootstrap lấy từ biến môi trường, mật khẩu được băm.
+2. 3 danh mục mẫu và 2 khóa học: một khóa miễn phí (test ghi danh miễn phí) và một khóa có phí (test PayOS sandbox).
+3. Mỗi khóa có 2 chương, mỗi chương 3 bài giảng; đặt `is_trial_allowed = true` cho ít nhất một bài giảng.
+4. Nạp đầy đủ các khóa của `system_settings` theo `DE-09`.
+5. Tạo sẵn 1 video kèm transcript, chunk và embedding giả (vector 1536 chiều) để test tính năng RAG mà không cần chạy FFmpeg/Whisper.
+
+Không chạy seed trên môi trường chính thức.
+
+---
+
+## GIAI ĐOẠN 9: Triển Khai & Vận Hành
+
+### 9.1 Mô hình chạy API và Worker
+- API (FastAPI/Uvicorn) và Worker là hai tiến trình riêng nhưng cùng trỏ tới Supabase PostgreSQL + pgvector và Cloudflare R2. Trong môi trường phát triển có thể chạy cả hai trên cùng một máy.
+- Worker không phục vụ HTTP; nhận việc bằng cách theo dõi bảng `pipeline_steps` (polling cơ sở dữ liệu), khi mở rộng thì chuyển sang hàng đợi Redis.
+
+### 9.2 Công việc định kỳ
+- `workers/order_expiry.py`: chạy mỗi 60 giây, quét các đơn `pending` có `expires_at < now()` và chuyển sang `expired` theo BR-16. Khi mở rộng, đưa lên Celery Beat hoặc cron của nền tảng triển khai.
+- Dọn phiên và token hết hạn: chạy hằng ngày.
+
+### 9.3 Cấu hình và bí mật
+- Toàn bộ bí mật đọc từ biến môi trường; tệp `.env` không bao giờ được commit.
+- Kết nối Supabase qua connection pooler và đặt giới hạn `pool_size` phù hợp vì hạn mức kết nối của gói miễn phí là hữu hạn.
+
+### 9.4 Quan sát, kiểm tra sức khỏe và quay lui
+- `GET /healthz`: kiểm tra ứng dụng còn sống, ping cơ sở dữ liệu và Cloudflare R2; chỉ trả trạng thái, không lộ chi tiết hạ tầng.
+- Log JSON có `request_id`, `user_id`, `lesson_id`, độ trễ; không ghi bí mật, OTP gốc hay token gốc.
+- Mọi thay đổi lược đồ phải đi qua Alembic; quay lui bằng `alembic downgrade -1`.
+- Prometheus và Sentry thuộc phạm vi giai đoạn 2.
+
+---
+
 ## BẢNG KIỂM TRA CHẤT LƯỢNG (DEFINITION OF DONE)
 
 Trước khi bàn giao Backend cho đội ngũ Mobile và Web Admin, hệ thống cần thỏa mãn checklist sau:
@@ -419,3 +464,5 @@ Trước khi bàn giao Backend cho đội ngũ Mobile và Web Admin, hệ thốn
 - [ ] AI Trợ giảng chỉ trả lời trong ngữ cảnh bài giảng, có trích dẫn timestamp và từ chối khi câu hỏi ngoài phạm vi.
 - [ ] Re-indexing khi sửa transcript không làm gián đoạn tính năng chat AI của học viên.
 - [ ] Webhook PayOS xử lý idempotent, kích hoạt ghi danh ngay khi nhận thông báo thanh toán thành công.
+- [ ] Không tồn tại cấu hình cơ sở dữ liệu hay lưu trữ cục bộ trong repo (không MinIO, không container pgvector); mọi kết nối trỏ tới Supabase và Cloudflare R2.
+- [ ] `pytest -q` chạy được; khi chưa khai báo `TEST_DATABASE_URL` thì các test cần cơ sở dữ liệu tự động SKIP thay vì báo lỗi.
