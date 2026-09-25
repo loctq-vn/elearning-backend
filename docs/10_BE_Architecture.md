@@ -1,7 +1,7 @@
 # 10 — Đặc Tả Kiến Trúc Backend (Backend Architecture Specification)
 
 > **Dự án:** Nền tảng học trực tuyến thông minh tích hợp AI Trợ giảng tương tác theo ngữ cảnh bài giảng.
-> **Phiên bản tài liệu:** 2.0 — Kế thừa phiên bản 1.1 ngày 15/09/2026, bổ sung diễn giải về trách nhiệm từng tầng, vòng đời yêu cầu, công việc nền, lưu trữ và tích hợp.
+> **Phiên bản tài liệu:** 2.1 — Kế thừa phiên bản 2.0, chốt Cloud stack chính thức duy nhất (Supabase PostgreSQL + pgvector, Cloudflare R2) và bổ sung định nghĩa Storage Adapter, AI Adapter.
 > **Nguồn tham chiếu:** `00_SYSTEM_BUSINESS_ANALYSIS.md` [Confirmed], `02_Use_Case_Specification.md` [Confirmed], `08_FE_BE_Data_Contract.md` [Confirmed], `09_BE_Database_Schema.md`.
 > **Quy ước trạng thái:** `[Confirmed]`, `[Derived / Proposed]`, `[Dự kiến — Chưa cam kết chính thức]`, `[TBD]` được sử dụng như đã thống nhất toàn hệ thống.
 
@@ -35,21 +35,50 @@ Tầng API chịu trách nhiệm tiếp nhận yêu cầu, kiểm tra xác thự
 
 ## 3. Ngăn Xếp Công Nghệ (Technology Stack)
 
+### 3.0 Cloud Stack chính thức (đã chốt)
+
+Cloud stack của dự án đã được chốt thống nhất trên toàn bộ tài liệu ở giai đoạn hiện tại, không còn mô tả theo dạng nhiều lựa chọn `[Confirmed — Chốt nội bộ]`:
+
+| Thành phần | Công nghệ chốt |
+|---|---|
+| Cơ sở dữ liệu & véc-tơ | Supabase PostgreSQL + pgvector |
+| Lưu trữ đối tượng | Cloudflare R2 |
+| Backend API | Python FastAPI |
+| Xử lý nền | Worker chạy nền (pipeline video/AI) |
+| Chuyển mã video | FFmpeg + ffprobe (tự mã hóa HLS) |
+| Nhận dạng giọng nói | Whisper |
+| Mô hình nhúng | OpenAI text-embedding-3-small (1536 chiều, phiên bản v1) |
+| Mô hình ngôn ngữ | GPT-4o-mini (chính), Gemini Flash (dự phòng) |
+| Thanh toán | PayOS (VietQR, webhook HMAC) |
+
+Pipeline xử lý chính được mô tả thống nhất theo luồng:
+
+```text
+Client → FastAPI → Supabase PostgreSQL/pgvector + Cloudflare R2 → Worker → FFmpeg/Whisper/Embedding/LLM
+```
+
+Quy định đi kèm cloud stack chốt:
+
+- Supabase và Cloudflare R2 là stack Cloud chính thức của dự án ở giai đoạn hiện tại.
+- MinIO chỉ được dùng cho mục đích kiểm thử cục bộ khi phát triển, không phải lưu trữ chính thức và không xuất hiện trong pipeline chính.
+- AWS không được đưa vào pipeline hiện tại; AWS chỉ được ghi nhận là hướng migration trong tương lai thông qua các bộ điều hợp (Storage Adapter, AI Adapter), xem DE-06.
+- Mọi truy cập lưu trữ đối tượng và mô hình bên ngoài đi qua bộ điều hợp biên có ranh giới rõ ràng để business logic không phụ thuộc nhà cung cấp cụ thể.
+
 ### 3.1 Tầng giao diện lập trình ứng dụng
 
 Backend sử dụng Python với FastAPI cho tầng API, Pydantic v2 cho kiểm tra dữ liệu, SQLAlchemy 2.0 cho truy cập cơ sở dữ liệu và Alembic cho di trú lược đồ `[Derived / Proposed]`. Lựa chọn này phù hợp với yêu cầu triển khai nhanh, kiểm tra kiểu dữ liệu khớp với hợp đồng `08` và quản lý phiên bản lược đồ có thể quay lui.
 
 ### 3.2 Cơ sở dữ liệu và lưu trữ
 
-PostgreSQL kết hợp pgvector là cơ sở dữ liệu chính `[Confirmed]`. Triển khai quản trị trên Supabase với giới hạn gói miễn phí là phương án dự kiến `[Derived / Proposed]`. Tệp video và luồng HLS lưu trên lưu trữ đối tượng tương thích S3: môi trường phát triển dùng MinIO cục bộ, là phần mềm do nhóm tự vận hành, không tốn phí dịch vụ, dùng để giả lập lưu trữ đám mây; môi trường chính thức dùng Cloudflare R2 cho tệp thô và luồng HLS, phân phối qua mạng phân phối nội dung `[Confirmed — Chốt nội bộ]`. Ảnh thu nhỏ và ảnh đại diện lưu trên Supabase Storage hoặc R2. Việc chuyển đổi giữa các đầu lưu trữ thực hiện qua bộ điều hợp lưu trữ và biến môi trường địa chỉ lưu trữ, không sửa mã nghiệp vụ.
+PostgreSQL kết hợp pgvector là cơ sở dữ liệu chính, triển khai quản trị trên Supabase `[Confirmed — Chốt nội bộ]`. Tệp video, luồng HLS, ảnh thu nhỏ và ảnh đại diện lưu trên Cloudflare R2, phân phối qua mạng phân phối nội dung `[Confirmed — Chốt nội bộ]`. MinIO chỉ dùng để kiểm thử cục bộ khi phát triển, không phải lưu trữ chính thức và không nằm trong pipeline chính. Mọi thao tác lưu trữ đi qua bộ điều hợp lưu trữ (Storage Adapter) và biến môi trường cấu hình, không sửa mã nghiệp vụ khi thay đổi nhà cung cấp; AWS không nằm trong pipeline hiện tại và chỉ được ghi nhận là hướng migration tương lai.
 
 ### 3.3 Xử lý video và tải lên
 
-FFmpeg tự triển khai chịu trách nhiệm chuyển mã video sang HLS đa độ phân giải `[Derived / Proposed]`. Tải lên sử dụng hai cơ chế gồm tải lên nhiều phần, trong đó mỗi yêu cầu tối đa dưới 200MB cho tệp nhỏ `[Confirmed]`, và tải lên có thể tiếp tục cho tệp dung lượng lớn, trong đó toàn bộ video hoàn chỉnh tối đa 5GB `[Confirmed — Chốt theo hợp đồng 08]`. Video vượt 200MB được cắt thành nhiều phần, mỗi phần dưới 200MB, gửi lần lượt và tiếp tục từ phần còn thiếu khi mất mạng. Video vượt 5GB bị từ chối với lỗi dung lượng quá lớn. Quyết định không dùng dịch vụ Stream tính phí nhằm kiểm soát chi phí là đề xuất đã chốt nội bộ `[Derived / Proposed]`.
+FFmpeg tự triển khai chịu trách nhiệm chuyển mã video sang HLS đa độ phân giải, kèm ffprobe kiểm tra thông tin media `[Derived / Proposed]`. Tải lên sử dụng hai cơ chế gồm tải lên nhiều phần, trong đó mỗi yêu cầu tối đa dưới 200MB cho tệp nhỏ `[Confirmed]`, và tải lên có thể tiếp tục cho tệp dung lượng lớn, trong đó toàn bộ video hoàn chỉnh tối đa 5GB `[Confirmed — Chốt theo hợp đồng 08]`. Video vượt 200MB được cắt thành nhiều phần, mỗi phần dưới 200MB, gửi lần lượt và tiếp tục từ phần còn thiếu khi mất mạng. Video vượt 5GB bị từ chối với lỗi dung lượng quá lớn. Quyết định tự mã hóa bằng FFmpeg, không dùng dịch vụ Stream tính phí nhằm kiểm soát chi phí `[Confirmed — Chốt nội bộ]`.
 
 ### 3.4 Trí tuệ nhân tạo
 
-Phiên âm sử dụng Whisper với ngôn ngữ tiếng Việt `[Confirmed]`. Tạo véc-tơ nhúng sử dụng mô hình nhúng nhỏ phiên bản v1 với 1536 chiều và độ đo cosine `[Derived / Proposed]`. Mô hình ngôn ngữ chính là GPT-4o-mini, mô hình dự phòng là Gemini Flash `[Confirmed]`. Thời gian chờ gọi mô hình là 30 giây `[Derived / Proposed]`.
+Phiên âm sử dụng Whisper với ngôn ngữ tiếng Việt `[Confirmed]`. Tạo véc-tơ nhúng sử dụng mô hình OpenAI text-embedding-3-small phiên bản v1 với 1536 chiều và độ đo cosine `[Derived / Proposed]`. Mô hình ngôn ngữ chính là GPT-4o-mini, mô hình dự phòng là Gemini Flash `[Confirmed]`. Thời gian chờ gọi mô hình là 30 giây `[Derived / Proposed]`.
 
 ### 3.5 Thanh toán, công việc nền, xác thực và quan sát
 
@@ -66,8 +95,8 @@ flowchart LR
     API --> MW["Phần mềm trung gian Xác thực Phân quyền"]
     MW --> SVC["Tầng dịch vụ nghiệp vụ"]
     SVC --> REPO["Tầng kho dữ liệu"]
-    REPO --> DB[("PostgreSQL với pgvector")]
-    SVC --> STORE[("Lưu trữ đối tượng R2 MinIO")]
+    REPO --> DB[("Supabase PostgreSQL với pgvector")]
+    SVC --> STORE[("Cloudflare R2 (Storage Adapter)")]
     SVC --> AI["Bộ điều hợp Whisper Nhúng LLM"]
     API --> WORKER["Worker Chuyển mã Phiên âm Lập chỉ mục"]
     WORKER --> DB
@@ -76,7 +105,7 @@ flowchart LR
     SVC --> MAIL["Dịch vụ thư điện tử OTP"]
 ```
 
-Sơ đồ trên phản ánh đúng luồng phụ thuộc: máy khách chỉ gọi API, API đi qua phần mềm trung gian rồi tới dịch vụ, dịch vụ gọi kho dữ liệu và các tích hợp biên, worker chạy nền cập nhật cơ sở dữ liệu và lưu trữ.
+Sơ đồ trên phản ánh đúng luồng phụ thuộc: máy khách chỉ gọi API, API đi qua phần mềm trung gian rồi tới dịch vụ, dịch vụ gọi kho dữ liệu (Supabase PostgreSQL + pgvector) và các tích hợp biên qua bộ điều hợp, worker chạy nền cập nhật cơ sở dữ liệu và lưu trữ Cloudflare R2. Pipeline xử lý chính được mô tả thống nhất: Client → FastAPI → Supabase PostgreSQL/pgvector + Cloudflare R2 → Worker → FFmpeg/Whisper/Embedding/LLM `[Confirmed — Chốt nội bộ]`.
 
 ---
 
@@ -118,7 +147,7 @@ Backend được chia thành các mô-đun gồm xác thực, người dùng, da
 
 ### 6.2 Bố cục thư mục đề xuất
 
-Bố cục gồm điểm khởi động ứng dụng, cấu hình, bảo mật, phụ thuộc dùng chung, giới hạn tần suất, lưu trữ và thư điện tử ở tầng lõi. Mỗi mô-đun nghiệp vụ có bốn thành phần tương ứng. Thư mục worker chứa các tác vụ tải lên, chuyển mã, phiên âm, lập chỉ mục, lập chỉ mục lại và hết hạn đơn hàng. Thư mục bộ điều hợp AI chứa các trình bọc Whisper, nhúng, mô hình ngôn ngữ và mẫu nhắc. Thư mục cơ sở dữ liệu chứa khai báo nền, phiên làm việc, mô hình và tập lệnh di trú. Môi trường phát triển dùng container gồm API, PostgreSQL có pgvector, MinIO và Redis từ xa cho giai đoạn mở rộng `[Derived / Proposed]`.
+Bố cục gồm điểm khởi động ứng dụng, cấu hình, bảo mật, phụ thuộc dùng chung, giới hạn tần suất, lưu trữ và thư điện tử ở tầng lõi. Mỗi mô-đun nghiệp vụ có bốn thành phần tương ứng. Thư mục worker chứa các tác vụ tải lên, chuyển mã, phiên âm, lập chỉ mục, lập chỉ mục lại và hết hạn đơn hàng. Thư mục bộ điều hợp AI chứa các trình bọc Whisper, nhúng, mô hình ngôn ngữ và mẫu nhắc. Thư mục cơ sở dữ liệu chứa khai báo nền, phiên làm việc, mô hình và tập lệnh di trú. Môi trường phát triển dùng container gồm API và PostgreSQL có pgvector; MinIO chỉ dùng làm container kiểm thử lưu trữ cục bộ, Redis từ xa dành cho giai đoạn mở rộng `[Derived / Proposed]`.
 
 Ví dụ bố cục triển khai:
 
@@ -225,11 +254,15 @@ Các công việc gồm tải lên, chuyển mã HLS, phiên âm, lập chỉ m�
 
 ### 8.3 Kiến trúc lưu trữ
 
-PostgreSQL lưu toàn bộ dữ liệu quan hệ và véc-tơ `[Confirmed]`. Lưu trữ đối tượng lưu tệp thô, các tệp HLS, ảnh thu nhỏ và ảnh đại diện. Môi trường phát triển dùng MinIO cục bộ, là phần mềm lưu trữ đối tượng tương thích S3 do nhóm tự vận hành, không tốn phí dịch vụ, dùng để giả lập lưu trữ đám mây `[Confirmed — Chốt nội bộ]`. Môi trường chính thức dùng Cloudflare R2 cho tệp thô và luồng HLS, phân phối qua mạng phân phối nội dung. Hạn mức miễn phí mỗi tháng gồm 10GB lưu trữ chuẩn, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra. Ảnh thu nhỏ và ảnh đại diện dùng Supabase Storage hoặc R2. Transcript, đoạn văn bản và véc-tơ lưu trong PostgreSQL để đảm bảo toàn vẹn và truy xuất trong cùng một giao dịch logic.
+PostgreSQL lưu toàn bộ dữ liệu quan hệ và véc-tơ trên Supabase `[Confirmed — Chốt nội bộ]`. Lưu trữ đối tượng chính thức là Cloudflare R2, lưu tệp thô, các tệp HLS, ảnh thu nhỏ và ảnh đại diện, phân phối qua mạng phân phối nội dung; hạn mức miễn phí mỗi tháng gồm 10GB lưu trữ chuẩn, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra `[Confirmed — Chốt nội bộ]`. MinIO chỉ dùng để kiểm thử cục bộ khi phát triển và không xuất hiện trong pipeline chính. Transcript, đoạn văn bản và véc-tơ lưu trong PostgreSQL để đảm bảo toàn vẹn và truy xuất trong cùng một giao dịch logic.
+
+Mọi thao tác với lưu trữ đối tượng đi qua một interface bộ điều hợp lưu trữ (Storage Adapter) duy nhất với các thao tác chuẩn gồm tải tệp lên, tải thư mục HLS lên, cấp đường dẫn truy cập có chữ ký và xóa tệp. Tầng dịch vụ và worker chỉ gọi interface này, không dùng SDK của nhà cung cấp trực tiếp và không giữ giao dịch cơ sở dữ liệu mở trong lúc chờ phản hồi mạng. Việc thay đổi nhà cung cấp lưu trữ về sau chỉ cần viết bộ điều hợp mới và đổi biến môi trường, không sửa logic nghiệp vụ.
 
 ### 8.4 Tích hợp AI và thanh toán
 
 Backend giao tiếp với nhà cung cấp AI qua bộ điều hợp với thời gian chờ 30 giây, mẫu nhắc được quản lý phiên bản và tóm tắt được lưu bộ nhớ đệm theo phiên bản transcript `[Derived / Proposed]`. Giá trị tham số truy xuất (Top-K, ngưỡng, tăng trọng thời gian) và giới hạn dung lượng lấy từ mục quyết định đã chốt của tài liệu `09` và hợp đồng `08`; tài liệu này không định nghĩa lại.
+
+Bộ điều hợp AI được tổ chức thành interface AI Adapter duy nhất gồm ba trình bọc: phiên âm (Whisper), nhúng (OpenAI text-embedding-3-small, 1536 chiều, phiên bản v1) và mô hình ngôn ngữ (GPT-4o-mini chính, Gemini Flash dự phòng theo chính sách thử mô hình chính 1 lần rồi fallback đúng 1 lần, tổng thời gian không vượt quá 60 giây). Tầng dịch vụ và worker chỉ gọi interface, không gọi SDK của nhà cung cấp trực tiếp, nên việc thay đổi nhà cung cấp AI về sau không sửa business logic `[Confirmed — Chốt nội bộ]`.
 
 Tích hợp PayOS gồm tạo đơn hàng, trả mã QR, nhận webhook và kích hoạt ghi danh. Endpoint webhook `POST /api/webhooks/payos` xác thực bằng chữ ký HMAC (không dùng JWT) và bắt buộc đảm bảo hai tính chất: **idempotency** — sự kiện trùng lặp cho cùng một mã đơn hàng chỉ cập nhật một lần, gọi lại trả 200 không đổi dữ liệu; và **nguyên tử** — ghi nhận trạng thái `paid` và tạo ghi danh trong cùng một giao dịch database, không tách rời `[Dự kiến — Chưa cam kết chính thức]`. Đơn chỉ được chuyển `paid` khi đang `pending` và chưa quá thời điểm hết hạn.
 
@@ -254,8 +287,9 @@ Webhook PayOS xác thực bằng chữ ký HMAC trên payload gốc, kiểm tra 
 1. DE-01 Giới hạn dung lượng tải lên [Confirmed — Chốt theo hợp đồng 08]: Mỗi yêu cầu tải lên nhiều phần tối đa dưới 200MB. Toàn bộ video hoàn chỉnh tối đa 5GB. Video vượt 200MB được cắt thành nhiều phần và tải lên có thể tiếp tục.
 2. DE-02 Tên bước pipeline [Confirmed — Chốt theo hợp đồng 08]: Dùng 4 bước gồm tải lên (upload), chuyển mã (transcode), phiên âm (transcribe) và lập chỉ mục (index) cho API và cơ sở dữ liệu. Hợp đồng 08 hiện ghi tên bước phiên âm là stt, ánh xạ sang phiên âm khi cần tương thích API. Bước chuyển mã tương ứng xử lý HLS, bước phiên âm tương ứng xử lý nhận dạng giọng nói, bước lập chỉ mục tương ứng xử lý lập chỉ mục trong tài liệu 00.
 3. DE-03 Tên trạng thái [Confirmed — Chốt theo hợp đồng 08]: Tầng dữ liệu và API dùng hoàn tất cho video và đã thanh toán cho đơn hàng. Tên nghiệp vụ sẵn sàng và thành công chỉ dùng mô tả và hiển thị.
-4. DE-04 Kiến trúc lưu trữ [Confirmed — Chốt nội bộ]: Môi trường phát triển dùng MinIO cục bộ để giả lập lưu trữ đám mây, không tốn phí dịch vụ. Môi trường chính thức dùng Cloudflare R2 cho tệp thô và HLS với hạn mức miễn phí 10GB lưu trữ, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra.
+4. DE-04 Cloud stack chính thức [Confirmed — Chốt nội bộ]: Supabase PostgreSQL + pgvector là cơ sở dữ liệu chính thức và Cloudflare R2 là lưu trữ đối tượng chính thức duy nhất cho tệp thô, HLS, ảnh thu nhỏ và ảnh đại diện với hạn mức miễn phí 10GB lưu trữ, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra. MinIO chỉ dùng để kiểm thử cục bộ khi phát triển, không phải lưu trữ chính thức và không nằm trong pipeline chính. Mọi thao tác lưu trữ đi qua Storage Adapter và mọi truy cập mô hình AI đi qua AI Adapter để business logic không phụ thuộc nhà cung cấp.
 5. DE-05 Phạm vi giai đoạn 2 [TBD]: Giám sát nâng cao, đánh giá sao, slide bài giảng và báo cáo phân tích nâng cao thuộc giai đoạn 2.
+6. DE-06 Hướng migration tương lai [TBD]: AWS được ghi nhận là hướng mở rộng trong tương lai, ví dụ AWS S3 cho lưu trữ đối tượng. AWS không được đưa vào pipeline hiện tại; khi dự án thực sự cần chuyển đổi, chỉ bổ sung bộ điều hợp mới cho Storage Adapter và đổi biến môi trường mà không sửa logic nghiệp vụ.
 
 ---
 

@@ -180,8 +180,8 @@ Hệ thống được thiết kế tinh gọn và tập trung cao độ vào tr�
 - **Luồng nghiệp vụ chính:**
   1. Quản trị viên chọn file video từ máy tính và nhấn "Tải lên". Giao diện hiển thị thanh tiến trình (progress bar).
   2. File video được lưu trữ an toàn và kích hoạt chuỗi xử lý nền tự động (Background Pipeline):
-     - **Bước 1 (Video Transcoding):** Hệ thống chuyển đổi video sang định dạng phát trực tuyến phân đoạn **HLS (HTTP Live Streaming)** với nhiều mức chất lượng (Adaptive Bitrate) và lưu trữ trên hệ thống phân phối (Cloudflare Stream hoặc AWS S3/CloudFront).
-     - **Bước 2 (Speech-to-Text):** Hệ thống trích xuất audio của video và đưa qua mô hình nhận dạng giọng nói **OpenAI Whisper / Faster-Whisper** để sinh ra văn bản phụ đề (Transcript) có gắn kèm dấu thời gian chính xác từng câu (timestamps).
+     - **Bước 1 (Video Transcoding):** Worker Backend dùng FFmpeg tự chuyển đổi video sang định dạng phát trực tuyến phân đoạn **HLS (HTTP Live Streaming)** với nhiều mức chất lượng (Adaptive Bitrate), lưu trữ trên **Cloudflare R2** và phân phối qua CDN của Cloudflare.
+     - **Bước 2 (Speech-to-Text):** Hệ thống trích xuất audio của video và đưa qua mô hình nhận dạng giọng nói **Whisper** để sinh ra văn bản phụ đề (Transcript) có gắn kèm dấu thời gian chính xác từng câu (timestamps).
      - **Bước 3 (Vector Indexing):** Hệ thống thực hiện phân đoạn văn bản (Text Chunking), sử dụng mô hình Text Embedding để chuyển đổi các đoạn transcript thành các vector số học và lưu trữ vào cơ sở dữ liệu **PostgreSQL với extension pgvector**.
   3. Quản trị viên theo dõi trạng thái tiến trình thời gian thực trên bảng điều khiển: `Uploading` → `Processing_HLS` → `Processing_STT` → `Processing_Indexing` → `Ready`.
   4. Sau khi quy trình hoàn tất, Quản trị viên được thông báo để chuyển sang bước kiểm duyệt phụ đề (BP-05).
@@ -582,12 +582,13 @@ Thông tin thực hiện đồ án được xác nhận chính thức từ Đề
 - **Hệ điều hành di động:** Android Native (ngôn ngữ Kotlin/Java), thư viện phát video chuẩn Google AndroidX Media3 / ExoPlayer.
 - **Frontend Quản trị:** Next.js (React), TypeScript, Tailwind CSS.
 - **Backend API:** Python FastAPI (hiệu năng cao, tương thích trực tiếp các thư viện AI tiên tiến).
-- **Cơ sở dữ liệu:** PostgreSQL (lưu trữ quan hệ người dùng, khóa học, bài tập) kết hợp extension `pgvector` (lưu trữ và tìm kiếm vector ngữ nghĩa phục vụ RAG).
+- **Cơ sở dữ liệu:** PostgreSQL (lưu trữ quan hệ người dùng, khóa học, bài tập) kết hợp extension `pgvector` (lưu trữ và tìm kiếm vector ngữ nghĩa phục vụ RAG), triển khai trên **Supabase** — nền tảng Cloud chính thức của dự án.
+- **Lưu trữ đối tượng (Object Storage):** **Cloudflare R2** — lưu trữ tệp video thô, luồng HLS, thumbnail và ảnh đại diện. Môi trường phát triển cục bộ có thể dùng MinIO chạy Docker chỉ cho mục đích kiểm thử.
 - **Công nghệ AI & Xử lý giọng nói:**
-  - Speech-to-Text: OpenAI Whisper API / Faster-Whisper.
-  - LLM phục vụ Hỏi-Đáp & Tóm tắt: OpenAI GPT-4o-mini / Google Gemini Flash.
-  - Text Embedding: OpenAI text-embedding-3-small / BGE-M3.
-- **Truyền tải Video:** Giao thức HLS (HTTP Live Streaming) tích hợp dịch vụ Cloudflare Stream hoặc AWS S3 + CloudFront.
+  - Speech-to-Text: Whisper.
+  - LLM phục vụ Hỏi-Đáp & Tóm tắt: GPT-4o-mini (chính), Gemini Flash (dự phòng fallback).
+  - Text Embedding: OpenAI text-embedding-3-small (1536 chiều, cosine similarity).
+- **Truyền tải Video:** Giao thức HLS (HTTP Live Streaming) — tự mã hóa bằng FFmpeg trên Worker Backend, lưu trữ và phát trực tiếp từ **Cloudflare R2** qua CDN. Không dùng Cloudflare Stream tính phí và không dùng AWS ở giai đoạn hiện tại.
 - **Công cụ phát triển:** Android Studio, Visual Studio Code, Docker, Git/GitHub, Postman, Figma.
 
 ---

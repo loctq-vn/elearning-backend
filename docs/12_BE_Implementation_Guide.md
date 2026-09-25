@@ -3,10 +3,10 @@
 > **Dự án:** Nền tảng học trực tuyến thông minh tích hợp AI Trợ giảng tương tác theo ngữ cảnh bài giảng.  
 > **Phiên bản:** 1.0 — Ngày tạo: 20/09/2026  
 > **Nguồn tham chiếu bắt buộc:**  
-> - [`08_FE_BE_Data_Contract.md`](file:///d:/Đồ án 1/08_FE_BE_Data_Contract.md) (Hợp đồng API & Mã lỗi)  
-> - [`09_BE_Database_Schema.md`](file:///d:/Đồ án 1/09_BE_Database_Schema.md) (Lược đồ 27 bảng & pgvector)  
-> - [`10_BE_Architecture.md`](file:///d:/Đồ án 1/10_BE_Architecture.md) (Kiến trúc phân tầng & Vòng đời yêu cầu)  
-> - [`11_BE_AI_Pipeline_Spec.md`](file:///d:/Đồ án 1/11_BE_AI_Pipeline_Spec.md) (Quy trình Video HLS, Whisper, Chunking & RAG)  
+> - [`08_FE_BE_Data_Contract.md`](file:///d:/elearning-backend/docs/08_FE_BE_Data_Contract.md) (Hợp đồng API & Mã lỗi)  
+> - [`09_BE_Database_Schema.md`](file:///d:/elearning-backend/docs/09_BE_Database_Schema.md) (Lược đồ 27 bảng & pgvector)  
+> - [`10_BE_Architecture.md`](file:///d:/elearning-backend/docs/10_BE_Architecture.md) (Kiến trúc phân tầng & Vòng đời yêu cầu)  
+> - [`11_BE_AI_Pipeline_Spec.md`](file:///d:/elearning-backend/docs/11_BE_AI_Pipeline_Spec.md) (Quy trình Video HLS, Whisper, Chunking & RAG)  
 
 ---
 
@@ -47,15 +47,37 @@ Giai đoạn 8: Tích hợp Cổng thanh toán PayOS, Webhook Idempotency & Dash
 
 ## GIAI ĐOẠN 0: Chuẩn Bị Hạ Tầng & Dịch Vụ Môi Trường
 
+### 0.0 Cloud Stack chính thức (đã chốt)
+Cloud stack của dự án đã được chốt thống nhất trên toàn bộ tài liệu ở giai đoạn hiện tại, không mô tả theo dạng nhiều lựa chọn:
+
+| Thành phần | Công nghệ chốt |
+|---|---|
+| Database | Supabase PostgreSQL + pgvector |
+| Object Storage | Cloudflare R2 |
+| Backend API | FastAPI |
+| Worker | Worker nền xử lý background/pipeline |
+| Video processing | FFmpeg + ffprobe |
+| STT | Whisper |
+| Embedding | OpenAI text-embedding-3-small (1536 chiều) |
+| LLM | GPT-4o-mini (chính), Gemini Flash (dự phòng) |
+
+Luồng pipeline chính được mô tả thống nhất:
+```text
+Client → FastAPI → Supabase PostgreSQL/pgvector + Cloudflare R2 → Worker → FFmpeg/Whisper/Embedding/LLM
+```
+
+Quy định đi kèm:
+- Supabase và Cloudflare R2 là stack Cloud chính thức của dự án; không viết lại theo dạng "Supabase hoặc AWS", "R2 hoặc MinIO".
+- MinIO chỉ được dùng cho mục đích local testing, không phải storage chính và không nằm trong pipeline chính.
+- AWS không được đưa vào pipeline hiện tại; chỉ ghi nhận là hướng migration trong tương lai thông qua Storage Adapter/AI Adapter (xem `10_BE_Architecture.md` DE-06).
+
 ### 0.1 Cài đặt môi trường phát triển cục bộ (Local Dev)
 - **Python:** Phiên bản `>= 3.11` (khuyến nghị 3.11 hoặc 3.12).
 - **FFmpeg:** Cài đặt FFmpeg trên máy chủ/máy dev, cấu hình đường dẫn `ffmpeg` và `ffprobe` vào biến `PATH` hệ thống.
 - **PostgreSQL & pgvector:**
-  - *Cách 1 (Khuyến nghị trên Cloud):* Tạo dự án mới trên **Supabase** (gói Free). Supabase đã tích hợp sẵn PostgreSQL 15+ và cho phép bật extension `vector` chỉ với 1 click trong mục Database -> Extensions.
-  - *Cách 2 (Local Docker):* Chạy container image `pgvector/pgvector:pg16` để lập trình offline.
-- **Lưu trữ đối tượng (Object Storage):**
-  - *Local Dev:* Dùng **MinIO** chạy Docker (`minio/minio`) để giả lập S3 không tốn phí.
-  - *Staging/Production:* Dùng **Cloudflare R2** (miễn phí băng thông ra - Egress Free, 10GB lưu trữ miễn phí) hoặc Supabase Storage.
+  - *Cloud (chính thức):* Tạo dự án mới trên **Supabase** (gói Free). Supabase đã tích hợp sẵn PostgreSQL 15+ và cho phép bật extension `vector` chỉ với 1 click trong mục Database -> Extensions.
+  - *Local Dev (dev offline):* Chạy container image `pgvector/pgvector:pg16` để lập trình offline; môi trường lược đồ tương đương Supabase.
+- **Lưu trữ đối tượng (Object Storage):** **Cloudflare R2** là storage chính thức duy nhất (miễn phí băng thông ra - Egress Free, 10GB lưu trữ miễn phí), dùng thống nhất cho cả dev, staging và production. **MinIO** chạy Docker (`minio/minio`) chỉ dùng khi cần kiểm thử cục bộ (local testing), không phải storage chính.
 - **Dịch vụ tích hợp bên ngoài:**
   - **OpenAI API Key** (dùng `text-embedding-3-small` 1536 chiều và `gpt-4o-mini`).
   - **Google Gemini API Key** (dùng `gemini-1.5-flash` làm mô hình fallback).
@@ -73,12 +95,12 @@ SECRET_KEY=your-super-secret-jwt-key-min-32-chars
 ACCESS_TOKEN_EXPIRE_SECONDS=900       # 15 phút (BR-03)
 REFRESH_TOKEN_EXPIRE_DAYS=7          # 7 ngày cho Mobile
 
-# Database (Supabase / Local pgvector)
+# Database (Supabase PostgreSQL + pgvector — chính thức; container pgvector local chỉ cho dev offline)
 DATABASE_URL=postgresql+asyncpg://postgres:your-password@db.supabase.co:5432/postgres
 DATABASE_URL_SYNC=postgresql://postgres:your-password@db.supabase.co:5432/postgres # Dùng cho Alembic
 
-# S3 / Cloudflare R2 / MinIO Storage
-STORAGE_ENDPOINT_URL=http://localhost:9000  # Hoặc https://<account_id>.r2.cloudflarestorage.com
+# Cloudflare R2 Storage (chính thức) — MinIO chỉ dùng cho local testing
+STORAGE_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com  # Local testing (MinIO): http://localhost:9000
 STORAGE_ACCESS_KEY=your-access-key
 STORAGE_SECRET_KEY=your-secret-key
 STORAGE_BUCKET_NAME=elearning-media
@@ -153,7 +175,7 @@ app/
 │   ├── reindex.py              # Chunking & Vector re-indexing
 │   └── order_expiry.py         # Quét đơn hết hạn 15 phút
 └── adapters/                   # Tích hợp dịch vụ biên ngoài
-    ├── storage.py              # S3/R2/MinIO client (upload, signed URL)
+    ├── storage.py              # Storage Adapter: Cloudflare R2 (chính thức); MinIO chỉ cho local testing (upload, signed URL)
     ├── mailer.py               # Gửi email OTP
     ├── payos.py                # Wrapper SDK PayOS, tạo QR VietQR
     └── ai/
@@ -176,6 +198,17 @@ Xây dựng lớp `AppException` và middleware bắt lỗi toàn cục trong `a
   }
   ```
 - Bắt `RequestValidationError` của Pydantic để trả về HTTP 400 `VALIDATION_ERROR` kèm chi tiết field lỗi.
+
+### 1.4 Thiết kế Storage Adapter & AI Adapter (chống khóa vào nhà cung cấp)
+Cloud stack hiện tại đã chốt là Supabase + Cloudflare R2, nhưng toàn bộ thao tác lưu trữ và gọi AI phải đi qua adapter để sau này chuyển sang AWS (hoặc nhà cung cấp khác) mà không phải sửa business logic:
+
+1. **Storage Adapter (`app/adapters/storage.py`):**
+   - Định nghĩa interface (abstract class) `StorageAdapter` với các phương thức chuẩn: `upload_file`, `upload_directory` (cho thư mục HLS chứa `m3u8`/`ts`), `get_signed_url`, `delete_file`.
+   - Hiện thực `R2StorageAdapter` (boto3 cấu hình endpoint Cloudflare R2 qua biến `STORAGE_*`) làm adapter mặc định. Có thể viết `MinIOStorageAdapter` chỉ cho local testing và sau này `S3StorageAdapter` cho AWS — hướng migration tương lai, không đưa vào pipeline hiện tại.
+   - Service/Worker chỉ inject `StorageAdapter` qua Dependency Injection, không import boto3 trực tiếp và không giữ transaction DB mở khi chờ phản hồi mạng.
+2. **AI Adapter (`app/adapters/ai/`):**
+   - `whisper.py` (STT), `embeddings.py` (text-embedding-3-small, 1536 chiều), `llm.py` (GPT-4o-mini + fallback Gemini Flash: thử mô hình chính 1 lần, lỗi 429/503/timeout thì fallback đúng 1 lần, tổng ≤ 60s).
+   - Service/Worker chỉ gọi interface của adapter; thay đổi nhà cung cấp AI chỉ cần viết adapter mới, không sửa business logic.
 
 ---
 
@@ -287,13 +320,13 @@ Tạo đầy đủ 27 bảng trong thư mục `app/db/models/`:
 
 ### 6.1 Upload video dung lượng lớn (Resumable Upload)
 - Hỗ trợ tải lên từng phần (<200MB/chunk, tối đa 5GB/video) theo quyết định `DE-01`.
-- Khi các phần tải lên hoàn tất, ghép file và lưu bản gốc vào Cloudflare R2 / MinIO.
+- Khi các phần tải lên hoàn tất, ghép file và lưu bản gốc vào Cloudflare R2 qua Storage Adapter (local testing dùng MinIO).
 - Tạo bản ghi `videos` ở trạng thái `uploading` $\rightarrow$ `uploaded`, đồng thời khởi tạo 4 bản ghi `pipeline_steps`: `upload`, `transcode`, `transcribe`, `index` ở trạng thái `pending`.
 
 ### 6.2 Worker chuyển mã HLS bằng FFmpeg (`workers/video_pipeline.py`)
 1. Cập nhật bước `transcode` sang `processing`.
 2. Dùng FFmpeg chuyển mã video thô sang chuẩn phát trực tuyến HLS đa độ phân giải (1080p, 720p, 480p, 360p) kèm playlist chính `master.m3u8`.
-3. Tải toàn bộ playlist và các file phân đoạn `.ts` lên R2/MinIO.
+3. Tải toàn bộ playlist và các file phân đoạn `.ts` lên Cloudflare R2 qua Storage Adapter.
 4. Cập nhật `hls_master_url` vào bảng `videos` và đánh dấu bước `transcode` là `completed`.
 
 ### 6.3 Worker phiên âm Whisper Speech-to-Text

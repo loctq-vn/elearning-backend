@@ -35,8 +35,8 @@ Pipeline phục vụ hai mục tiêu nghiệp vụ song song `[Confirmed]`. Th�
 
 ```mermaid
 flowchart TD
-    A[Quản trị viên tải lên video thô] --> B[Lưu trữ tệp thô và khởi tạo bản ghi video]
-    B --> C[Chuyển mã sang luồng HLS đa độ phân giải bằng FFmpeg]
+    A[Quản trị viên tải lên video thô] --> B["Lưu tệp thô lên Cloudflare R2 và khởi tạo bản ghi video"]
+    B --> C[Worker FFmpeg chuyển mã sang luồng HLS đa độ phân giải]
     C --> D[Trích xuất rãnh âm thanh cho giai đoạn phiên âm]
     D --> E[Phiên âm bằng Whisper tạo transcript có mốc thời gian]
     E --> F[Phân đoạn transcript thành các đoạn văn bản nhỏ]
@@ -50,6 +50,8 @@ flowchart TD
     L --> M[Sinh câu trả lời có tăng cường truy xuất kèm nguồn trích dẫn]
     E --> N[Sinh tóm tắt toàn bài và theo chương]
 ```
+
+Toàn bộ pipeline chạy trên hạ tầng Cloud chính thức đã chốt của dự án: FastAPI tiếp nhận yêu cầu, Supabase PostgreSQL + pgvector lưu dữ liệu và véc-tơ, Cloudflare R2 lưu tệp video thô và luồng HLS, Worker chạy nền điều phối các bước FFmpeg, Whisper, Embedding và LLM `[Confirmed — Chốt nội bộ]`. Pipeline không sử dụng MinIO trong môi trường chính thức (MinIO chỉ dành cho kiểm thử cục bộ) và không sử dụng AWS ở giai đoạn hiện tại.
 
 ### 2.3 Các giai đoạn chính và trạng thái
 
@@ -69,7 +71,7 @@ Tiếp nhận tệp video thô từ quản trị viên, lưu trữ an toàn và 
 
 ### 3.3 Xử lý
 
-Backend kiểm tra định dạng thuộc danh sách cho phép, kiểm tra quyền quản trị viên và bài giảng thuộc khóa học hợp lệ, sau đó lưu tệp thô lên lưu trữ đối tượng, tạo bản ghi video ở trạng thái đang tải lên rồi chuyển sang đã tải lên, đồng thời khởi tạo các bước pipeline ở trạng thái đang chờ `[Confirmed]`.
+Backend kiểm tra định dạng thuộc danh sách cho phép, kiểm tra quyền quản trị viên và bài giảng thuộc khóa học hợp lệ, sau đó lưu tệp thô lên Cloudflare R2 thông qua Storage Adapter, tạo bản ghi video ở trạng thái đang tải lên rồi chuyển sang đã tải lên, đồng thời khởi tạo các bước pipeline ở trạng thái đang chờ `[Confirmed]`.
 
 ### 3.4 Đầu ra và kích hoạt
 
@@ -81,7 +83,7 @@ Backend kiểm tra định dạng thuộc danh sách cho phép, kiểm tra quy�
 
 ### 4.1 Chuyển mã sang HLS
 
-Worker dùng FFmpeg để chuyển tệp thô thành luồng HLS đa độ phân giải `[Confirmed]`. Đầu ra gồm playlist chính và các playlist thành phần cùng các đoạn video nhỏ, được lưu lên lưu trữ đối tượng và phân phối qua mạng phân phối nội dung. Đường dẫn playlist chính được lưu vào cột đường dẫn HLS của bảng videos. Lựa chọn tự triển khai FFmpeg thay cho dịch vụ Stream tính phí nhằm kiểm soát chi phí `[Derived / Proposed]`. Tên bước trong API và cơ sở dữ liệu là chuyển mã, tương ứng bước `transcode` trong hợp đồng `08` `[Confirmed — Chốt theo hợp đồng 08]`.
+Worker dùng FFmpeg để chuyển tệp thô thành luồng HLS đa độ phân giải `[Confirmed]`. Đầu ra gồm playlist chính và các playlist thành phần cùng các đoạn video nhỏ, được lưu lên Cloudflare R2 và phân phối qua mạng phân phối nội dung. Đường dẫn playlist chính được lưu vào cột đường dẫn HLS của bảng videos. Lựa chọn tự triển khai FFmpeg thay cho dịch vụ Stream tính phí nhằm kiểm soát chi phí `[Confirmed — Chốt nội bộ]`. Tên bước trong API và cơ sở dữ liệu là chuyển mã, tương ứng bước `transcode` trong hợp đồng `08` `[Confirmed — Chốt theo hợp đồng 08]`.
 
 ### 4.2 Trích xuất âm thanh
 
@@ -125,7 +127,7 @@ Cấu hình chunk phiên bản c1 sử dụng kích thước 500 tokens với đ
 
 ### 7.1 Tạo véc-tơ nhúng
 
-Mỗi chunk được gửi qua mô hình nhúng để tạo một véc-tơ số học `[Derived / Proposed]`. Phiên bản v1 sử dụng mô hình nhúng nhỏ với 1536 chiều. Kết quả gồm véc-tơ, tên mô hình, phiên bản và số chiều được lưu vào bảng véc-tơ nhúng tách riêng. Việc tách bảng cho phép một chunk tồn tại song song nhiều véc-tơ thuộc các thế hệ mô hình khác nhau trong giai đoạn chuyển đổi.
+Mỗi chunk được gửi qua mô hình nhúng để tạo một véc-tơ số học `[Derived / Proposed]`. Phiên bản v1 sử dụng mô hình OpenAI text-embedding-3-small với 1536 chiều. Kết quả gồm véc-tơ, tên mô hình, phiên bản và số chiều được lưu vào bảng véc-tơ nhúng tách riêng. Việc tách bảng cho phép một chunk tồn tại song song nhiều véc-tơ thuộc các thế hệ mô hình khác nhau trong giai đoạn chuyển đổi.
 
 ### 7.2 Lập chỉ mục véc-tơ
 
@@ -187,7 +189,7 @@ sequenceDiagram
 
 ### 9.2 Cơ chế kiểm soát phạm vi và mô hình ngôn ngữ
 
-Mẫu nhắc yêu cầu mô hình chỉ sử dụng ngữ cảnh được cung cấp, luôn kèm nguồn trích dẫn và từ chối khi câu hỏi ngoài phạm vi `[Confirmed]`. Mô hình chính là GPT-4o-mini, mô hình dự phòng là Gemini Flash `[Confirmed]`. Thời gian chờ mỗi lần gọi là 30 giây `[Derived / Proposed]`. Chính sách gọi: thử tối đa 1 lần với mô hình chính; khi hết thời gian chờ hoặc lỗi quá tải (HTTP 429, 503) thì gọi mô hình dự phòng đúng một lần; cả hai đều thất bại thì trả về lỗi 502/504 và cho phép máy khách thử lại, tổng thời gian chờ tối đa của một yêu cầu hỏi đáp do đó không vượt quá 60 giây. Mọi câu hỏi và trả lời đều được lưu vào nhật ký để phục vụ thống kê và phản hồi.
+Mẫu nhắc yêu cầu mô hình chỉ sử dụng ngữ cảnh được cung cấp, luôn kèm nguồn trích dẫn và từ chối khi câu hỏi ngoài phạm vi `[Confirmed]`. Mô hình chính là GPT-4o-mini, mô hình dự phòng là Gemini Flash (gemini-1.5-flash) `[Confirmed]`. Thời gian chờ mỗi lần gọi là 30 giây `[Derived / Proposed]`. Chính sách gọi: thử tối đa 1 lần với mô hình chính; khi hết thời gian chờ hoặc lỗi quá tải (HTTP 429, 503) thì gọi mô hình dự phòng đúng một lần; cả hai đều thất bại thì trả về lỗi 502/504 và cho phép máy khách thử lại, tổng thời gian chờ tối đa của một yêu cầu hỏi đáp do đó không vượt quá 60 giây. Mọi câu hỏi và trả lời đều được lưu vào nhật ký để phục vụ thống kê và phản hồi.
 
 ---
 
@@ -230,7 +232,7 @@ Bảng videos và pipeline_steps phục vụ API trạng thái pipeline, bảng 
 1. **DE-01 Giới hạn dung lượng tải lên [Confirmed — Chốt theo hợp đồng 08]:** Mỗi yêu cầu tải lên nhiều phần tối đa dưới 200MB. Toàn bộ video hoàn chỉnh tối đa 5GB. Video vượt 200MB được cắt thành nhiều phần, mỗi phần dưới 200MB, gửi lần lượt qua giao thức tải lên có thể tiếp tục và tiếp tục từ phần còn thiếu khi mất mạng. Video vượt 5GB bị từ chối với lỗi dung lượng quá lớn.
 2. **DE-02 Tên bước pipeline [Confirmed — Chốt theo hợp đồng 08]:** Dùng 4 bước gồm tải lên (upload), chuyển mã (transcode), phiên âm (transcribe) và lập chỉ mục (index) cho API và cơ sở dữ liệu. Lưu ý hợp đồng `08` hiện ghi tên bước phiên âm là `stt`, cách gọi chính thức thống nhất là phiên âm và ánh xạ sang `stt` khi cần tương thích API. Bước chuyển mã tương ứng trạng thái xử lý HLS trong tài liệu `00`, bước phiên âm tương ứng trạng thái xử lý nhận dạng giọng nói, bước lập chỉ mục tương ứng trạng thái xử lý lập chỉ mục.
 3. **DE-03 Tên trạng thái hoàn tất và thanh toán [Confirmed — Chốt theo hợp đồng 08]:** Tầng dữ liệu và API dùng giá trị hoàn tất cho video và giá trị đã thanh toán cho đơn hàng. Tên nghiệp vụ tương đương trong tài liệu `00` là sẵn sàng và thành công, chỉ dùng cho mô tả nghiệp vụ và hiển thị.
-4. **DE-04 Kiến trúc lưu trữ [Confirmed — Chốt nội bộ]:** Môi trường phát triển dùng MinIO cục bộ, là phần mềm lưu trữ đối tượng tương thích S3 do nhóm tự vận hành, không tốn phí dịch vụ, dùng để giả lập lưu trữ đám mây. Môi trường chính thức dùng Cloudflare R2 cho tệp thô và luồng HLS, phân phối qua mạng phân phối nội dung. Hạn mức miễn phí mỗi tháng gồm 10GB lưu trữ chuẩn, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra. Ảnh thu nhỏ và ảnh đại diện dùng Supabase Storage hoặc R2. Việc chuyển đổi thực hiện qua biến môi trường địa chỉ lưu trữ và bộ điều hợp lưu trữ.
+4. **DE-04 Cloud stack chính thức [Confirmed — Chốt nội bộ]:** Cloud stack chính thức của dự án gồm Supabase PostgreSQL + pgvector cho cơ sở dữ liệu và Cloudflare R2 cho lưu trữ đối tượng. Cloudflare R2 là lưu trữ chính thức duy nhất cho tệp video thô, luồng HLS, ảnh thu nhỏ và ảnh đại diện, phân phối qua mạng phân phối nội dung; hạn mức miễn phí mỗi tháng gồm 10GB lưu trữ chuẩn, 1 triệu yêu cầu loại A, 10 triệu yêu cầu loại B và miễn phí băng thông ra. MinIO chỉ dùng để kiểm thử cục bộ khi phát triển, không phải lưu trữ chính thức và không nằm trong pipeline chính. AWS không được đưa vào pipeline hiện tại, chỉ ghi nhận là hướng migration tương lai thông qua bộ điều hợp lưu trữ. Việc chuyển đổi nhà cung cấp lưu trữ thực hiện qua biến môi trường địa chỉ lưu trữ và bộ điều hợp lưu trữ, không sửa logic nghiệp vụ.
 5. **DE-05 Phạm vi giai đoạn 2 [TBD]:** Đánh giá sao, slide bài giảng, báo cáo phân tích nâng cao, giám sát nâng cao và nhận dạng giọng nói tự triển khai thuộc giai đoạn 2. Phạm vi Đồ án 1 chỉ giữ thống kê câu hỏi trí tuệ nhân tạo và doanh thu cơ bản đã có trong hợp đồng.
 
 ---

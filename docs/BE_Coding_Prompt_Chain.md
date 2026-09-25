@@ -19,8 +19,8 @@
 Dự án: Xây dựng nền tảng học trực tuyến thông minh tích hợp AI Trợ giảng tương tác ngữ cảnh bài giảng.
 Kiến trúc Backend: Python FastAPI, Pydantic v2, SQLAlchemy 2.0 (Async), PostgreSQL + pgvector, Alembic.
 Hạ tầng & Dịch vụ:
-- Database: PostgreSQL với extension pgvector trên Supabase (hoặc local Docker pgvector/pgvector:pg16).
-- Storage: Cloudflare R2 / MinIO (tương thích AWS S3 SDK boto3).
+- Database: Supabase PostgreSQL + pgvector (Cloud chính thức của dự án; container pgvector/pgvector:pg16 chỉ dùng cho dev offline).
+- Storage: Cloudflare R2 — Cloud chính thức của dự án, mọi thao tác đi qua Storage Adapter (SDK boto3 cấu hình tương thích S3). MinIO chỉ dùng cho local testing. Không dùng AWS ở giai đoạn hiện tại.
 - Xử lý Media: FFmpeg tự chuyển mã HLS đa độ phân giải, Whisper STT phiên âm tiếng Việt.
 - AI RAG: OpenAI text-embedding-3-small (1536 dim, cosine similarity), LLM chính GPT-4o-mini, LLM dự phòng Gemini 1.5 Flash.
 - Thanh toán: Cổng PayOS (VietQR, xác thực Webhook bằng chữ ký HMAC, xử lý Idempotent).
@@ -253,7 +253,7 @@ Hãy viết code chi tiết, chú ý tính toán điểm số chính xác và ki
 
 ---
 
-## Prompt 6: Bộ Điều Hợp Lưu Trữ (R2/MinIO) & Worker Xử Lý Video (FFmpeg + Whisper)
+## Prompt 6: Bộ Điều Hợp Lưu Trữ (Cloudflare R2) & Worker Xử Lý Video (FFmpeg + Whisper)
 
 **Mục tiêu:** Xây dựng cơ chế tải lên video lớn (resumable chunked upload < 200MB, max 5GB), worker FFmpeg chuyển mã HLS đa độ phân giải và Whisper phiên âm tiếng Việt (BR-07, BR-15).  
 **Tệp đầu ra cần tạo:**
@@ -267,11 +267,11 @@ Hãy viết code chi tiết, chú ý tính toán điểm số chính xác và ki
 Bạn là Media & Pipeline Engineer. Dựa trên tài liệu 11_BE_AI_Pipeline_Spec.md (Mục 3, 4, 5) và các quyết định DE-01, DE-02, DE-04, hãy lập trình hệ thống xử lý video bài giảng:
 
 1. Tạo app/adapters/storage.py:
-   - Sử dụng boto3 cấu hình tương thích S3 (kết nối MinIO ở local hoặc Cloudflare R2 ở production).
-   - Viết các phương thức: upload_file, upload_directory (cho thư mục HLS chứa m3u8 và ts), get_signed_url, delete_file.
+   - Định nghĩa interface StorageAdapter (abstract class) với các phương thức: upload_file, upload_directory (cho thư mục HLS chứa m3u8 và ts), get_signed_url, delete_file.
+   - Hiện thực R2StorageAdapter dùng boto3 cấu hình tương thích S3 kết nối Cloudflare R2 ở production (biến STORAGE_*); endpoint có thể trỏ MinIO chỉ khi local testing. Service/worker không gọi boto3 trực tiếp, chỉ gọi qua Storage Adapter — thiết kế tổng quát để sau này thay bằng AWS S3 (hướng migration tương lai) mà không sửa business logic.
 
 2. Tạo app/adapters/ai/whisper.py:
-   - Client gọi mô hình Whisper (OpenAI API hoặc local model) với tham số ngôn ngữ tiếng Việt (language="vi").
+   - Client gọi mô hình Whisper (qua AI Adapter) với tham số ngôn ngữ tiếng Việt (language="vi").
    - Trả về danh sách các đoạn phiên âm gồm start_time (float), end_time (float), text (string). Đảm bảo sai số timestamp <= 0.5s theo quy tắc BR-15.
 
 3. Tạo app/workers/video_pipeline.py:
@@ -279,7 +279,7 @@ Bạn là Media & Pipeline Engineer. Dựa trên tài liệu 11_BE_AI_Pipeline_S
    - Bước 1 (transcode):
      + Cập nhật pipeline_steps (step='transcode', status='processing').
      + Dùng FFmpeg (subprocess hoặc ffmpeg-python) chuyển mã video thô thành chuẩn HLS đa biến thể (1080p, 720p, 480p) kèm file master.m3u8 và các file .ts.
-     + Upload toàn bộ thư mục HLS lên R2/MinIO storage.
+     + Upload toàn bộ thư mục HLS lên Cloudflare R2 (qua Storage Adapter; MinIO chỉ khi local testing).
      + Cập nhật hls_master_url trong bảng videos. Đánh dấu step 'transcode' completed.
    - Bước 2 (transcribe):
      + Cập nhật pipeline_steps (step='transcribe', status='processing').
@@ -296,6 +296,8 @@ Bạn là Media & Pipeline Engineer. Dựa trên tài liệu 11_BE_AI_Pipeline_S
    - Endpoint POST /api/admin/videos/{id}/pipeline/retry: Cho phép chạy lại bước pipeline bị lỗi.
 
 Hãy viết code xử lý file an toàn, dọn dẹp file rác trong khối finally và ghi log đầy đủ.
+
+Tiêu chí nghiệm thu bổ sung: mọi thao tác lưu trữ đều đi qua Storage Adapter (app/adapters/storage.py), không import boto3 trong service/worker; pipeline không tham chiếu AWS và chỉ dùng Cloudflare R2 ở production (MinIO giới hạn cho local testing).
 ```
 
 ---

@@ -340,7 +340,7 @@
 | **Mã UC** | UC-08 |
 | **Tên** | Xem video bài giảng trực tuyến (HLS) |
 | **Actor** | Học viên |
-| **Mô tả ngắn** | Học viên xem video bài giảng trực tuyến qua giao thức HLS (Cloudflare Stream/AWS CloudFront). Trình phát hỗ trợ play/pause, tua, chọn chất lượng, picture-in-picture, phụ đề đồng bộ, chia chương, và là điểm khởi đầu cho các tương tác AI (hỏi đáp, tóm tắt), ghi chú, quiz. |
+| **Mô tả ngắn** | Học viên xem video bài giảng trực tuyến qua giao thức HLS do Backend tự mã hóa bằng FFmpeg, lưu trữ và phát từ **Cloudflare R2**. Trình phát hỗ trợ play/pause, tua, chọn chất lượng, picture-in-picture, phụ đề đồng bộ, chia chương, và là điểm khởi đầu cho các tương tác AI (hỏi đáp, tóm tắt), ghi chú, quiz. |
 | **Màn hình liên quan** | M-12 (Trình phát video bài giảng) |
 
 **Điều kiện tiên quyết (Pre-condition):**
@@ -957,7 +957,7 @@
 |------|-------|-----------|
 | 1 | Quản trị viên | Tại A-06 hoặc A-07, sử dụng vùng upload video (drag-and-drop hoặc click chọn file). |
 | 2 | Hệ thống | Validate file: kiểm tra định dạng (MP4, MOV, AVI, MKV, WEBM), dung lượng (≤ 5 GB), codec hợp lệ. |
-| 3 | Hệ thống | Bắt đầu upload file lên storage (Cloudflare Stream / AWS S3). Hiển thị thanh tiến trình upload (%). |
+| 3 | Hệ thống | Bắt đầu upload file lên object storage **Cloudflare R2** qua Storage Adapter (môi trường dev cục bộ dùng MinIO chỉ để kiểm thử). Hiển thị thanh tiến trình upload (%). |
 | 4 | Hệ thống | Upload hoàn tất → Lưu metadata video vào CSDL (filename, size, duration, storage URL). Cập nhật trạng thái: "Đã upload". |
 | 5 | Hệ thống | Tự động trigger pipeline xử lý video (UC-28): Upload ✓ → STT (khởi động) → Vector Indexing (chờ). |
 | 6 | Hệ thống | Hiển thị toast "Upload thành công. Pipeline xử lý đã bắt đầu." |
