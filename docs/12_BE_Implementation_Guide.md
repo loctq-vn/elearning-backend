@@ -314,6 +314,7 @@ Tạo đầy đủ 27 bảng trong thư mục `app/db/models/`:
 2. **Nộp bài (`POST /api/exams/{id}/submit`):**
    - Service so sánh các `selected_option_ids` của học viên với đáp án đúng trong DB.
    - Chấm điểm tự động: Tính điểm tổng, kiểm tra đạt/không đạt dựa trên `passing_score`.
+   - **Trước khi tạo lượt làm bài mới**, kiểm tra `exercise_attempts` theo bộ `(exam_id, student_id, attempt_number)`; nếu đã đạt `exams.max_attempts` (và `max_attempts <> 0`) thì trả **`403 MAX_ATTEMPTS_REACHED`**. Đây là mã lỗi chính thức theo hợp đồng `08` mục 6.4.
    - Lưu kết quả vào `exercise_attempts` và chi tiết từng câu vào `attempt_answers`.
    - Trả về kết quả cho học viên: Điểm số, đúng/sai từng câu và **bây giờ mới mở phần giải thích (`explanation`)**.
 
@@ -335,7 +336,7 @@ Tạo đầy đủ 27 bảng trong thư mục `app/db/models/`:
 ### 6.3 Worker phiên âm Whisper Speech-to-Text
 1. Cập nhật bước `transcribe` sang `processing`.
 2. FFmpeg trích xuất âm thanh từ video thành file tạm `audio.wav` (16kHz, mono).
-3. Gửi file âm thanh qua mô hình Whisper (tiếng Việt).
+3. Gọi mô hình Whisper **chạy cục bộ** bằng `faster-whisper` trên máy worker: `WHISPER_MODEL_SIZE=small`, `WHISPER_DEVICE=auto`, `WHISPER_COMPUTE_TYPE=int8` khi chạy CPU (không dùng `float16` trên CPU), `WHISPER_LANGUAGE=vi`, `WHISPER_VAD_FILTER=true`. Chạy cục bộ nên **không cần cắt audio thủ công** và không tốn phí theo phút. Lần chạy đầu tiên tải trọng số mô hình (~0.5GB) về máy worker.
 4. Nhận kết quả các đoạn phiên âm có `start_time` và `end_time` (sai số $\le \pm 0.5$s theo BR-15).
 5. Lưu vào bảng `transcripts` (`version = 1`) và chi tiết từng dòng vào bảng `transcript_segments`.
 6. Xóa ngay file `audio.wav` tạm để tiết kiệm đĩa cứng và đánh dấu bước `transcribe` là `completed`.
@@ -360,11 +361,11 @@ Hiện thực hàm xử lý cho endpoint `POST /api/lessons/{lesson_id}/ask`:
 3. Truy vấn PostgreSQL pgvector:
    - Chỉ tìm kiếm trong bảng lesson_chunks có lesson_id tương ứng và is_active = True.
    - Sắp xếp theo khoảng cách cosine: embedding <=> question_embedding.
-   - Áp dụng công thức tăng trọng thời gian: giảm khoảng cách ngữ nghĩa cho các chunk có
-     start_time gần với current_timestamp trong vòng 120 giây (Time-weighting).
+   - Áp dụng công thức tăng trọng thời gian tại tài liệu `11` mục 8.2: `d' = d - w * max(0, 1 - |s - t| / W)` với `w = 0.05` (`retrieval_time_weight`) và `W = 120` giây (`retrieval_time_window_seconds`).
+     trong đó `s` là mốc bắt đầu của chunk và `t` là vị trí video học viên đang xem, đọc từ `ai_qa_logs.video_position_seconds`. Ngưỡng 0.72 được áp dụng trên khoảng cách gốc `d`, **không** áp dụng trên `d'`.
    - Lấy Top-5 ứng viên và lọc bỏ các chunk có điểm tương đồng < 0.72.
 4. Nếu không có chunk nào >= 0.72:
-   - Trả lời từ chối theo mẫu ngoài phạm vi (AI_OUT_OF_SCOPE) để tránh hallucination (BR-10).
+   - **Không gọi mô hình ngôn ngữ.** Trả HTTP 200 kèm `is_out_of_scope = true`, `answer` là câu từ chối cố định theo mẫu ngoài phạm vi bài giảng và `sources` là mảng rỗng (BR-10). Vẫn ghi `ai_qa_logs` và vẫn tính vào hạn mức ngày.
 5. Nếu có chunk hợp lệ:
    - Ghép ngữ cảnh các chunk vào System Prompt ép AI chỉ trả lời dựa trên tài liệu bài giảng.
    - Gọi GPT-4o-mini (timeout 30s). Nếu gặp lỗi 429/503/timeout -> tự động fallback sang Gemini Flash.
@@ -440,6 +441,9 @@ Không chạy seed trên môi trường chính thức.
 ### 9.2 Công việc định kỳ
 - `workers/order_expiry.py`: chạy mỗi 60 giây, quét các đơn `pending` có `expires_at < now()` và chuyển sang `expired` theo BR-16. Khi mở rộng, đưa lên Celery Beat hoặc cron của nền tảng triển khai.
 - Dọn phiên và token hết hạn: chạy hằng ngày.
+- Xoá chunk và véc-tơ có `is_active = false` quá **7 ngày** kể từ khi bị tắt hiệu lực: chạy hằng ngày.
+- Xoá tệp video thô trên R2 quá **30 ngày** kể từ khi bước `transcode` hoàn tất (giữ lại luồng HLS): chạy hằng ngày.
+- Thu hồi job mồ côi: quét `pipeline_steps` đang `processing` mà `lease_expires_at < now()` và đưa về `pending` hoặc `failed`: chạy mỗi phút.
 
 ### 9.3 Cấu hình và bí mật
 - Toàn bộ bí mật đọc từ biến môi trường; tệp `.env` không bao giờ được commit.

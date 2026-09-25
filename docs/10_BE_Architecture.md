@@ -143,7 +143,9 @@ Các luồng bắt buộc có giao dịch nguyên tử gồm: xác minh OTP đă
 
 ### 6.1 Các mô-đun nghiệp vụ
 
-Backend được chia thành các mô-đun gồm xác thực, người dùng, danh mục, khóa học, bài giảng và chương, video và pipeline, transcript, trí tuệ nhân tạo, ngân hàng câu hỏi, đề thi, ghi chú, tiến độ và ghi danh, đơn hàng, thông báo, phân tích và mô-đun dùng chung `[Derived / Proposed]`. Mỗi mô-đun có bộ định tuyến, lược đồ dữ liệu, dịch vụ và kho dữ liệu riêng, giúp cô lập thay đổi và kiểm thử độc lập.
+Backend được chia thành các mô-đun nghiệp vụ sau, mỗi mô-đun sở hữu một nhóm bảng và bốn thành phần `router.py`, `schemas.py`, `service.py`, `repository.py`: `auth` (xác thực), `users` (hồ sơ người dùng), `categories` (danh mục), `courses` (khóa học), `lessons` (chương và bài giảng), `videos` (video và pipeline), `transcripts` (phụ đề), `ai` (hỏi đáp, tóm tắt, chunk và véc-tơ), `questions` (ngân hàng câu hỏi), `exams` (đề thi và lần làm bài), `notes` (ghi chú), `progress` (tiến độ và ghi danh), `orders` (đơn hàng), `notifications` (thông báo), `analytics` (báo cáo thống kê) cùng mô-đun dùng chung `[Derived / Proposed]`.
+
+Ngoại lệ được ghi nhận rõ: mô-đun `analytics` được phép **truy vấn đọc trực tiếp** các bảng phục vụ thống kê (`enrollments`, `lesson_progress`, `exercise_attempts`, `ai_qa_logs`, `orders`) vì đây là truy vấn tổng hợp chỉ đọc, không ghi dữ liệu và không tạo phụ thuộc vòng giữa các mô-đun. Mọi mô-đun khác vẫn phải tuân thủ quy tắc không truy cập bảng của mô-đun khác `[Derived / Proposed]`.
 
 ### 6.2 Bố cục thư mục đề xuất
 
@@ -170,11 +172,14 @@ app/
       schemas.py
       service.py
       repository.py
+    users/
+    categories/
     courses/
     lessons/
     videos/
     transcripts/
     ai/
+    questions/
     exams/
     notes/
     progress/
@@ -251,6 +256,18 @@ Hệ thống chỉ có hai vai trò là học viên và quản trị viên `[Con
 ### 8.2 Công việc nền
 
 Các công việc gồm tải lên, chuyển mã HLS, phiên âm, lập chỉ mục, lập chỉ mục lại, hết hạn đơn hàng và tổng hợp tiến độ `[Confirmed — Chốt theo hợp đồng 08]`. Mỗi công việc được tạo sau một sự kiện như tải lên xong hoặc chỉnh sửa transcript, có trạng thái đang chờ, đang xử lý, hoàn tất và thất bại, có số lần thử lại và lưu thông điệp lỗi. Máy khách theo dõi qua API trạng thái pipeline thay vì kết nối thời gian thực ở giai đoạn hiện tại: trang quản trị polling mỗi 10 giây, máy khách polling trạng thái thanh toán mỗi 3 giây theo hợp đồng `08`; response lỗi khi hết hạn mức AI gồm mã 429 kèm số lượt còn lại và thời điểm reset (trường `questions_remaining` đã có trong phản hồi 4.1).
+
+### 8.2.1 Vòng đời job và chống chạy trùng (Worker) `[Confirmed — Chốt nội bộ]`
+
+Nhiều worker có thể chạy song song (nhiều tiến trình, nhiều máy). Mỗi bước pipeline là một job trong bảng `pipeline_steps`. Cơ chế nhận việc cụ thể:
+
+1. **Nhận việc có khoá:** trong một transaction, worker chọn các job `status = 'pending'` đã tới hạn (`next_attempt_at IS NULL OR next_attempt_at <= now()`), sắp theo `created_at`, dùng `FOR UPDATE SKIP LOCKED` để **bỏ qua** job mà worker khác đang giữ, rồi cập nhật `status = 'processing'`, `attempt_count = attempt_count + 1`, `started_at = now()`, `lease_expires_at = now() + interval '30 minutes'`.
+2. **Lease và heartbeat:** trong lúc chạy, worker cập nhật `progress` và **gia hạn `lease_expires_at` mỗi 30 giây**. Bước phiên âm chạy lâu nhất nên heartbeat là bắt buộc.
+3. **Thu hồi job mồ côi:** job còn ở `processing` nhưng `lease_expires_at < now()` nghĩa là worker đã chết. Tiến trình dọn dẹp đưa job về `pending` (nếu còn lượt thử) hoặc `failed`, đồng thời xoá đầu ra dở trước khi chạy lại.
+4. **Chu kỳ polling của worker:** 5 giây.
+5. **Thử lại:** theo chính sách ở tài liệu `11` mục 11.1 — tối đa 3 lần với backoff 30 giây, 2 phút, 10 phút ghi vào `next_attempt_at`.
+6. **Idempotency bắt buộc:** mỗi bước phải chạy lại an toàn. Bước `transcode` xoá thư mục HLS dở trước khi ghi mới; bước ghi transcript, chunk và véc-tơ dùng ràng buộc duy nhất kèm `ON CONFLICT`; không được sinh bản ghi trùng khi job chạy lại.
+7. **Trạng thái độc lập từng bước:** bốn bước có thể chạy tuần tự trong cùng một job của video, nhưng trạng thái mỗi bước được lưu riêng để retry đúng một bước mà không chạy lại các bước đã thành công.
 
 ### 8.3 Kiến trúc lưu trữ
 

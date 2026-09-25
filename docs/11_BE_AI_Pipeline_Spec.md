@@ -51,7 +51,7 @@ flowchart TD
     E --> N[Sinh tóm tắt toàn bài và theo chương]
 ```
 
-Toàn bộ pipeline chạy trên hạ tầng Cloud chính thức đã chốt của dự án: FastAPI tiếp nhận yêu cầu, Supabase PostgreSQL + pgvector lưu dữ liệu và véc-tơ, Cloudflare R2 lưu tệp video thô và luồng HLS, Worker chạy nền điều phối các bước FFmpeg, Whisper, Embedding và LLM `[Confirmed — Chốt nội bộ]`. Pipeline không sử dụng MinIO trong môi trường chính thức (MinIO chỉ dành cho kiểm thử cục bộ) và không sử dụng AWS ở giai đoạn hiện tại.
+Toàn bộ pipeline chạy trên hạ tầng Cloud chính thức đã chốt của dự án: FastAPI tiếp nhận yêu cầu, Supabase PostgreSQL + pgvector lưu dữ liệu và véc-tơ, Cloudflare R2 lưu tệp video thô và luồng HLS, Worker chạy nền điều phối các bước FFmpeg, Whisper, Embedding và LLM `[Confirmed — Chốt nội bộ]`. Pipeline không sử dụng cơ sở dữ liệu hay lưu trữ cục bộ và không sử dụng AWS ở giai đoạn hiện tại.
 
 ### 2.3 Các giai đoạn chính và trạng thái
 
@@ -73,6 +73,25 @@ Tiếp nhận tệp video thô từ quản trị viên, lưu trữ an toàn và 
 
 Backend kiểm tra định dạng thuộc danh sách cho phép, kiểm tra quyền quản trị viên và bài giảng thuộc khóa học hợp lệ, sau đó lưu tệp thô lên Cloudflare R2 thông qua Storage Adapter, tạo bản ghi video ở trạng thái đang tải lên rồi chuyển sang đã tải lên, đồng thời khởi tạo các bước pipeline ở trạng thái đang chờ `[Confirmed]`.
 
+#### 3.3.1 Giao thức tải lên nhiều phần bằng presigned URL `[Confirmed — Chốt nội bộ]`
+
+Backend **không** trung chuyển dữ liệu video. Máy khách tải từng phần **trực tiếp lên Cloudflare R2** qua URL có chữ ký do Backend cấp; Backend chỉ giữ metadata và trạng thái. Mọi thao tác lưu trữ đi qua Storage Adapter, không import SDK nhà cung cấp trong tầng service/router.
+
+| Bước | Endpoint | Việc Backend làm |
+|---|---|---|
+| 1. Khởi tạo | `POST /api/admin/videos/upload/init` | Kiểm tra quyền và bài giảng; kiểm tra `file_size_bytes` ≤ 5GB và định dạng hợp lệ; tạo bản ghi `videos` ở trạng thái `uploading` cùng 4 bản ghi `pipeline_steps` ở `pending`; gọi R2 khởi tạo multipart upload và trả về `upload_id`, `part_size`, tổng số phần |
+| 2. Tải từng phần | `POST /api/admin/videos/upload` | Cấp URL có chữ ký cho một `part_number`; máy khách `PUT` trực tiếp lên R2 và nhận lại `ETag` |
+| 3. Hoàn tất | `POST /api/admin/videos/upload` với `part_number = 0` (hoặc tham số `complete`) | Nhận danh sách `{part_number, etag}`, ghép tệp trên R2, cập nhật `raw_storage_url` và chuyển `overall_status` sang `uploaded`, kích hoạt worker `transcode` |
+| 4. Tiếp tục khi mất mạng | gọi lại bước 1 | Trả về danh sách phần đã nhận (đọc từ R2) để máy khách gửi tiếp các phần còn thiếu |
+| 5. Hủy | `PUT /api/admin/pipeline/{video_id}/cancel` | Hủy phiên multipart trên R2, đưa video về trạng thái `uploaded` hoặc `failed` |
+
+Ràng buộc kỹ thuật:
+- Kích thước mỗi phần: **tối thiểu 5MB** (riêng phần cuối được nhỏ hơn) và **tối đa 200MB** — giới hạn 5MB là quy định của giao thức multipart tương thích S3, không phải lựa chọn thiết kế.
+- Toàn bộ video tối đa **5GB**; vượt ngưỡng trả lỗi `413 FILE_TOO_LARGE`.
+- Kích thước phần khuyến nghị **50MB**; với 5GB thì tổng số phần khoảng 100, thấp hơn nhiều so với hạn mức 10.000 phần của giao thức.
+- URL có chữ ký có thời hạn ngắn; hết hạn thì máy khách xin lại URL cho phần đó chứ không làm hỏng phiên tải lên.
+- Backend kiểm tra định dạng ở bước 1 dựa trên tên tệp và MIME do máy khách khai báo; kiểm tra sâu bằng `ffprobe` thực hiện ở bước `transcode`.
+
 ### 3.4 Đầu ra và kích hoạt
 
 Đầu ra gồm định danh video, trạng thái và tiến trình tải lên. Khi tệp thô đã đầy đủ, Backend kích hoạt worker chuyển mã HLS. Trường hợp lỗi mạng hoặc tệp không hợp lệ, hệ thống giữ tệp thô đã nhận, ghi thông điệp lỗi và cho phép tải lại hoặc tiếp tục từ phần còn thiếu. Hành động hủy đưa video về trạng thái đã tải lên `[Confirmed]`.
@@ -84,6 +103,25 @@ Backend kiểm tra định dạng thuộc danh sách cho phép, kiểm tra quy�
 ### 4.1 Chuyển mã sang HLS
 
 Worker dùng FFmpeg để chuyển tệp thô thành luồng HLS đa độ phân giải `[Confirmed]`. Đầu ra gồm playlist chính và các playlist thành phần cùng các đoạn video nhỏ, được lưu lên Cloudflare R2 và phân phối qua mạng phân phối nội dung. Đường dẫn playlist chính được lưu vào cột đường dẫn HLS của bảng videos. Lựa chọn tự triển khai FFmpeg thay cho dịch vụ Stream tính phí nhằm kiểm soát chi phí `[Confirmed — Chốt nội bộ]`. Tên bước trong API và cơ sở dữ liệu là chuyển mã, tương ứng bước `transcode` trong hợp đồng `08` `[Confirmed — Chốt theo hợp đồng 08]`.
+
+#### 4.1.1 Thang chất lượng và tham số mã hóa `[Confirmed — Chốt nội bộ]`
+
+Dùng **3 mức chất lượng** để cân bằng giữa chi phí R2 (hạn mức miễn phí 10GB) và trải nghiệm xem trên thiết bị di động:
+
+| Mức | Độ phân giải | Video bitrate | Audio |
+|---|---|---|---|
+| 1080p | 1920×1080 | 4.5 Mbps (H.264 High) | AAC 128 kbps, 48kHz, stereo |
+| 720p | 1280×720 | 2.5 Mbps (H.264 Main) | AAC 128 kbps, 48kHz, stereo |
+| 480p | 854×480 | 1.2 Mbps (H.264 Main) | AAC 128 kbps, 48kHz, stereo |
+
+Tham số bắt buộc:
+- `-hls_time 6` — mỗi đoạn dài 6 giây.
+- Keyframe interval cố định **2 giây** (`-g 2 × fps`, `-keyint_min` bằng cùng giá trị, `-sc_threshold 0`) để mọi mức có điểm cắt đoạn trùng nhau, cho phép chuyển mức mượt.
+- `-hls_playlist_type vod`, `-hls_segment_filename` đặt tên đoạn theo mức chất lượng.
+- Playlist chính `master.m3u8` khai báo cả 3 biến thể kèm `BANDWIDTH` và `RESOLUTION`.
+- Không tạo bản 360p ở giai đoạn hiện tại; có thể bổ sung sau bằng cách chạy lại bước `transcode`.
+
+Thư mục HLS trên R2 dùng tiền tố `hls/{video_id}/` và đường dẫn playlist chính có dạng `{storage_public_base_url}/hls/{video_id}/master.m3u8`.
 
 ### 4.2 Trích xuất âm thanh
 
@@ -103,7 +141,22 @@ Giai đoạn này biến lời giảng trong âm thanh thành văn bản có m�
 
 ### 5.2 Xử lý bằng Whisper
 
-Hệ thống gọi mô hình Whisper để phiên âm `[Confirmed]`. Kết quả gồm nhiều đoạn, mỗi đoạn có thời điểm bắt đầu, thời điểm kết thúc và nội dung văn bản tính bằng giây. Backend lưu một bản ghi transcript với số phiên bản khởi tạo bằng 1 và lưu toàn bộ đoạn chi tiết vào bảng đoạn transcript theo số thứ tự.
+Hệ thống phiên âm bằng **Whisper chạy cục bộ** trên máy worker thông qua thư viện `faster-whisper` (CTranslate2) `[Confirmed — Chốt nội bộ]`. Chạy cục bộ không có giới hạn dung lượng tệp như API nên **không cần cắt audio thủ công** và không phát sinh chi phí theo phút phiên âm.
+
+| Tham số | Biến môi trường | Giá trị chốt |
+|---|---|---|
+| Kích thước mô hình | `WHISPER_MODEL_SIZE` | `small` (đổi sang `medium` hoặc `large-v3` khi cần độ chính xác cao hơn) |
+| Thiết bị | `WHISPER_DEVICE` | `auto` (dùng CPU nếu không có GPU) |
+| Kiểu tính toán | `WHISPER_COMPUTE_TYPE` | `int8` khi chạy CPU, `float16` khi chạy GPU. **Không dùng `float16` trên CPU** |
+| Beam size | `WHISPER_BEAM_SIZE` | `5` |
+| Lọc khoảng lặng | `WHISPER_VAD_FILTER` | `true` — tăng tốc và giảm phụ đề ảo giác |
+| Ngôn ngữ | `WHISPER_LANGUAGE` | `vi` |
+
+Thông số tham chiếu đã đo: model `small` với `int8` trên CPU 8 luồng xử lý 13 phút audio trong khoảng 1 phút 42 giây và dùng khoảng 1.5GB RAM. Do đó **bước phiên âm là bước chậm nhất trong pipeline**, cần báo tiến độ và cơ chế thu hồi job khi worker dừng đột ngột.
+
+Đầu vào là tệp WAV đơn kênh 16kHz do mục 4.2 tạo ra; tệp này phải được xoá trong khối `finally` sau khi phiên âm xong (khoảng 115MB cho bài giảng 60 phút). Kết quả gồm nhiều đoạn, mỗi đoạn có thời điểm bắt đầu, thời điểm kết thúc và nội dung văn bản tính bằng giây, bảo đảm sai số không quá 0.5 giây theo BR-15. Backend lưu một bản ghi transcript với số phiên bản khởi tạo bằng 1 và lưu toàn bộ đoạn chi tiết vào bảng đoạn transcript theo số thứ tự.
+
+Lần chạy đầu tiên tải trọng số mô hình (khoảng 0.5GB với `small`) từ HuggingFace Hub về máy worker, nên worker cần quyền truy cập mạng và dung lượng ổ đĩa tương ứng.
 
 ### 5.3 Đầu ra và đồng bộ phụ đề
 
@@ -149,9 +202,17 @@ Khi học viên đặt câu hỏi, Backend tạo véc-tơ cho câu hỏi bằng 
 
 Số lượng ứng viên tối đa Top-K bằng 5 `[Derived / Proposed — Đồng bộ UC-10]`. Top-K là số chunk nhiều nhất được đưa vào ngữ cảnh cho mô hình ngôn ngữ. Ngưỡng tương đồng 0.72 là mức tối thiểu để một chunk được coi là đủ liên quan. Mọi ứng viên dưới ngưỡng đều bị loại, kể cả khi chưa đủ 5 kết quả. Cửa sổ tăng trọng thời gian 120 giây ưu tiên các chunk có mốc thời gian gần vị trí video mà học viên đang xem, vì câu hỏi thường liên quan tới nội dung vừa nghe `[Derived / Proposed]`.
 
+**Công thức tăng trọng thời gian `[Confirmed — Chốt nội bộ]`:** gọi `d` là khoảng cách cosine giữa véc-tơ câu hỏi và véc-tơ của chunk, `t` là mốc thời gian video mà học viên đang xem, `s` là mốc bắt đầu của chunk. Khoảng cách hiệu dụng được tính:
+
+```text
+d' = d - w * max(0, 1 - |s - t| / W)
+```
+
+trong đó `w = 0.05` (khóa `retrieval_time_weight`) và `W = 120` giây (khóa `retrieval_time_window_seconds`). Chunk càng gần vị trí đang xem thì khoảng cách hiệu dụng càng giảm, tối đa 0.05 khi trùng mốc thời gian; ngoài cửa sổ 120 giây thì không được ưu tiên. Xếp hạng theo `d'` tăng dần và lấy tối đa 5 ứng viên, sau đó loại mọi ứng viên có độ tương đồng gốc dưới 0.72 — **ngưỡng áp dụng trên khoảng cách gốc `d`, không áp dụng trên `d'`**. Công thức này là nguồn duy nhất, module không tự đổi hệ số.
+
 ### 8.3 Khi không có ứng viên đạt ngưỡng
 
-Nếu không có chunk nào đạt ngưỡng, hệ thống không bịa câu trả lời mà trả về câu trả lời từ chối theo mẫu rằng câu hỏi nằm ngoài phạm vi bài giảng, đồng thời gợi ý học viên diễn đạt lại hoặc xem lại đoạn video gần nhất `[Confirmed]`. Trường hợp này vẫn được ghi nhật ký với danh sách nguồn rỗng để phục vụ thống kê.
+Nếu không có chunk nào đạt ngưỡng 0.72, hệ thống **không gọi mô hình ngôn ngữ** (tiết kiệm token và độ trễ) mà trả ngay HTTP **200** với trường `is_out_of_scope = true`: `answer` là câu từ chối cố định theo mẫu nêu rõ câu hỏi nằm ngoài phạm vi bài giảng và gợi ý học viên xem lại đoạn video gần nhất, `sources` là mảng rỗng. Đây là **kết quả nghiệp vụ bình thường**, không phải lỗi, nên **không** dùng mã lỗi `AI_OUT_OF_SCOPE`. Câu hỏi bị từ chối vẫn được ghi nhật ký và vẫn tính vào hạn mức theo ngày `[Confirmed — Chốt nội bộ]`.
 
 ```mermaid
 flowchart TD
@@ -215,9 +276,13 @@ Mỗi câu trả lời cho phép đánh giá tăng hoặc giảm `[Confirmed]`. 
 
 Lỗi tải lên và chuyển mã được thử lại từ tệp thô đã lưu mà không mất dữ liệu `[Confirmed]`. Lỗi phiên âm và lập chỉ mục được chạy lại độc lập từng bước. Lỗi mô hình ngôn ngữ do quá tải hoặc hết thời gian cho phép máy khách thử lại, nhật ký lưu câu trả lời rỗng kèm mã lỗi. Mọi lần thử lại đều cập nhật số lần thử, thời điểm và thông điệp lỗi vào bốn bước pipeline gồm tải lên, chuyển mã, phiên âm và lập chỉ mục tương ứng.
 
+Chính sách thử lại cụ thể `[Confirmed — Chốt nội bộ]`: mỗi bước được thử lại tự động **tối đa 3 lần** với thời gian chờ tăng dần **30 giây → 2 phút → 10 phút**. Sau lần thứ ba thất bại, bước đó và `videos.overall_status` chuyển sang `failed`; chỉ quản trị viên bấm retry thủ công mới chạy lại. Mỗi lần thử cập nhật số lần đã thử, thời điểm thử kế tiếp và thông điệp lỗi. Khi chạy lại bước `transcode`, worker **phải xoá thư mục HLS dở của lần chạy trước** trước khi ghi mới, tránh lẫn đoạn phim của hai lần chạy.
+
 ### 11.2 Lập chỉ mục lại và phiên bản
 
 Khi nội dung transcript thay đổi, Backend tăng phiên bản transcript, tạo lại chunk theo cấu hình phiên bản c1 hiện hành (500 tokens, độ chồng lấp 80–100) và tạo véc-tơ mới cho phiên bản mới, trong khi các chunk và véc-tơ cũ giữ cờ hiệu lực vẫn phục vụ tới khi dữ liệu mới sẵn sàng `[Confirmed]`. Ràng buộc duy nhất của bảng `lesson_chunks` (theo bộ lesson_id, transcript_version, chunk_config_version, chunk_index — xem tài liệu `09`) cho phép hai thế hệ chunk cùng tồn tại; việc chuyển hiệu lực thực hiện bằng cờ `is_active` rồi dọn dẹp sau thời gian giữ lại `[Confirmed — Chốt theo hợp đồng 08]`. Khi chuyển thế hệ mô hình nhúng, hệ thống điền dữ liệu song song, đánh giá trên tập câu hỏi mẫu, chuyển cờ phiên bản hiệu lực rồi dọn dẹp dữ liệu cũ sau thời gian giữ lại `[Derived / Proposed]`. Phiên bản chunk, transcript, nhúng và pipeline đều được lưu rõ để truy vết.
+
+Thời hạn giữ lại cụ thể `[Confirmed — Chốt nội bộ]`: chunk và véc-tơ có `is_active = false` được tác vụ nền xoá sau **7 ngày** kể từ khi bị tắt hiệu lực; tệp thô trên R2 được giữ **30 ngày** sau khi bước `transcode` hoàn tất rồi xoá để tiết kiệm hạn mức 10GB, trong khi luồng HLS được giữ lâu dài.
 
 ---
 

@@ -124,6 +124,31 @@ Hệ thống sử dụng các kiểu liệt kê sau để chuẩn hóa trạng t
 - Phạm vi tóm tắt gồm toàn bài và theo chương.
 - Loại thông báo gồm thanh toán, khóa học, hệ thống và bài tập.
 
+#### 4.1 Ánh Xạ Enum Giữa Tầng Dữ Liệu Và Tầng API
+
+Bảng dưới đây là **nguồn duy nhất** cho tên enum và giá trị; module không tự định nghĩa lại. Giá trị qua API trùng giá trị trong DB, trừ các trường hợp có ghi chú.
+
+| Enum | Giá trị trong DB | Giá trị qua API | Ghi chú |
+|---|---|---|---|
+| `user_role` | `student`, `admin` | trùng | — |
+| `otp_purpose` | `registration`, `password_reset` | trùng | khớp hợp đồng `08` mục 1.2 |
+| `course_status` | `draft`, `published`, `hidden` | trùng | khớp hợp đồng `08` mục 2.3 |
+| `video_overall_status` | `uploading`, `uploaded`, `processing`, `completed`, `failed` | trùng | `completed` tương đương tên nghiệp vụ Ready (DE-03) |
+| `pipeline_step` | `upload`, `transcode`, `transcribe`, `index` | `upload`, `transcode`, `stt`, `index` | hợp đồng `08` dùng `stt`; tên chính thức là `transcribe` (DE-02) |
+| `step_status` | `pending`, `processing`, `completed`, `failed` | trùng | — |
+| `order_status` | `pending`, `paid`, `failed`, `cancelled`, `expired` | trùng | `paid` tương đương tên nghiệp vụ Success (DE-03) |
+| `question_type` | `single_choice`, `multiple_choice`, `true_false`, `essay` | trùng | khớp Prompt 5 của chuỗi prompt |
+| `difficulty` | `easy`, `medium`, `hard` | trùng | — |
+| `exam_type` | `in_video_quiz`, `end_lesson_exam`, `end_course_exam` | trùng | `in_video_quiz` bắt buộc có `trigger_timestamp` |
+| `attempt_status` | `in_progress`, `submitted`, `graded`, `pending_grading` | trùng | `pending_grading` chỉ dùng cho câu tự luận |
+| `ai_feedback` | `none`, `up`, `down` | trùng | — |
+| `summary_scope` | `lesson`, `chapter` | trùng | — |
+| `notification_type` | `payment`, `course`, `system`, `exercise` | trùng | — |
+| `embedding_version` | `v1` | `v1` | phiên bản nhúng hiệu lực đọc từ `system_settings` |
+| `chunk_config_version` | `c1` | `c1` | c1 = 500 token, chồng lấp 80–100 token |
+
+`[Derived]` — danh sách giá trị cần nhóm rà lại trước khi viết migration.
+
 ---
 
 ## 5. Đặc Tả Bảng Chi Tiết (Table Specification)
@@ -206,9 +231,37 @@ Toàn bộ bảng sử dụng khóa chính là định danh duy nhất toàn c�
 
 Điều kiện xuất bản gồm tiêu đề, mô tả, ảnh bìa, danh mục, giá bán, ít nhất một chương và mỗi chương ít nhất một bài giảng có video đã sẵn sàng được kiểm tra ở tầng dịch vụ `[Confirmed]`.
 
-**Bảng chapters** và **bảng lessons** `[Confirmed]`.
+**Bảng chapters** `[Confirmed]`.
 
-Bảng chapters gồm id, course_id bắt buộc xóa xếp tầng, tiêu đề, thứ tự sắp xếp và các mốc thời gian, với ràng buộc duy nhất theo cặp khóa học và thứ tự. Bảng lessons gồm id, chapter_id bắt buộc, course_id phi chuẩn hóa để kiểm tra ghi danh nhanh, tiêu đề, mô tả, thứ tự sắp xếp, thời lượng, cờ học thử và các mốc thời gian.
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| course_id | UUID | Không | — | Khóa ngoại tới courses, xóa xếp tầng. |
+| title | VARCHAR(255) | Không | — | Tiêu đề chương. |
+| order_index | INTEGER | Không | 0 | Thứ tự sắp xếp trong khóa học. |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
+| updated_at | TIMESTAMPTZ | Không | now() | Thời điểm cập nhật. |
+
+Ràng buộc duy nhất theo cặp (course_id, order_index).
+
+**Bảng lessons** `[Confirmed]`.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| chapter_id | UUID | Không | — | Khóa ngoại tới chapters, xóa xếp tầng. |
+| course_id | UUID | Không | — | Phi chuẩn hóa để kiểm tra ghi danh nhanh; khóa ngoại tới courses. |
+| title | VARCHAR(255) | Không | — | Tiêu đề bài giảng. |
+| description | TEXT | Có | NULL | Mô tả bài giảng. |
+| order_index | INTEGER | Không | 0 | Thứ tự sắp xếp trong chương. |
+| duration_seconds | DOUBLE PRECISION | Có | NULL | Thời lượng bài giảng. |
+| is_trial_allowed | BOOLEAN | Không | FALSE | Cho phép học thử khi chưa ghi danh (BR-04). |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
+| updated_at | TIMESTAMPTZ | Không | now() | Thời điểm cập nhật. |
+
+Ràng buộc duy nhất theo cặp (chapter_id, order_index).
+
+`[Derived]` — bảng cột của chapters và lessons được suy ra từ mô tả nghiệp vụ, cần nhóm rà lại.
 
 
 ### 5.4 Bảng video, pipeline, transcript và tri thức ngữ nghĩa
@@ -244,10 +297,41 @@ Bảng chapters gồm id, course_id bắt buộc xóa xếp tầng, tiêu đề,
 | error_message | TEXT | Có | NULL | Chi tiết lỗi. |
 | started_at | TIMESTAMPTZ | Có | NULL | Thời điểm bắt đầu bước. |
 | completed_at | TIMESTAMPTZ | Có | NULL | Thời điểm kết thúc bước. |
+| attempt_count | INTEGER | Không | 0 | Số lần đã thử, dùng cho chính sách thử lại tối đa 3 lần. |
+| next_attempt_at | TIMESTAMPTZ | Có | NULL | Thời điểm được phép thử lại (backoff 30 giây, 2 phút, 10 phút). |
+| lease_expires_at | TIMESTAMPTZ | Có | NULL | Hạn giữ job; vượt hạn khi đang `processing` nghĩa là worker đã chết và job cần được thu hồi. |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
+| updated_at | TIMESTAMPTZ | Không | now() | Thời điểm cập nhật. |
 
 Ràng buộc duy nhất theo cặp video và bước đảm bảo mỗi video chỉ có một bản ghi cho mỗi bước. Bảng pipeline_steps lưu đúng bốn giá trị bước gồm tải lên (upload), chuyển mã (transcode), phiên âm (transcribe) và lập chỉ mục (index) `[Confirmed — Chốt theo hợp đồng 08]`.
 
-**Bảng transcripts** và **bảng transcript_segments** `[Confirmed]`. Bảng transcripts gồm id, lesson_id duy nhất, video_id có thể rỗng, ngôn ngữ mặc định là tiếng Việt, số phiên bản tăng mỗi khi nội dung bị chỉnh sửa và các mốc thời gian. Bảng transcript_segments gồm id, transcript_id, số thứ tự, thời điểm bắt đầu, thời điểm kết thúc phải lớn hơn thời điểm bắt đầu và nội dung văn bản, với ràng buộc duy nhất theo cặp transcript và số thứ tự.
+**Bảng transcripts** `[Confirmed]`.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| lesson_id | UUID | Không | Duy nhất | Khóa ngoại tới lessons, xóa xếp tầng; mỗi bài giảng tối đa một transcript chính. |
+| video_id | UUID | Có | NULL | Khóa ngoại tới videos, xóa đặt NULL. |
+| language | VARCHAR(10) | Không | vi | Ngôn ngữ phiên âm tiếng Việt. |
+| version | INTEGER | Không | 1 | Tăng mỗi khi nội dung phụ đề bị chỉnh sửa (BR-08). |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
+| updated_at | TIMESTAMPTZ | Không | now() | Thời điểm cập nhật. |
+
+**Bảng transcript_segments** `[Confirmed]`.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| transcript_id | UUID | Không | — | Khóa ngoại tới transcripts, xóa xếp tầng. |
+| segment_index | INTEGER | Không | — | Số thứ tự đoạn, bắt đầu từ 0. |
+| start_time | DOUBLE PRECISION | Không | — | Thời điểm bắt đầu tính bằng giây, không âm. |
+| end_time | DOUBLE PRECISION | Không | — | Thời điểm kết thúc tính bằng giây, CHECK end_time > start_time. |
+| text | TEXT | Không | — | Nội dung phụ đề. |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
+
+Ràng buộc duy nhất theo cặp (transcript_id, segment_index).
+
+`[Derived]` — bảng cột của transcripts và transcript_segments được suy ra từ mô tả nghiệp vụ, cần nhóm rà lại.
 
 **Bảng lesson_chunks** lưu đoạn văn bản phục vụ truy xuất `[Derived / Proposed]`.
 
@@ -325,17 +409,99 @@ Ràng buộc duy nhất theo cặp người dùng và bài giảng.
 | updated_at | TIMESTAMPTZ | Không | now() | Thời điểm cập nhật. |
 
 
-**Bảng questions** thuộc ngân hàng đề thi dùng chung `[Confirmed]`. Mỗi câu hỏi gồm id, nội dung, loại câu hỏi, giải thích hiển thị sau khi nộp, độ khó, bài giảng và khóa học tham chiếu có thể rỗng, người tạo và các mốc thời gian.
+**Bảng questions** thuộc ngân hàng đề thi dùng chung `[Confirmed]`.
 
-**Bảng question_options** lưu các phương án trắc nghiệm. Mỗi phương án gồm id, question_id xóa xếp tầng, nhãn như A, B, C, D, nội dung, dấu hiệu đáp án đúng và thứ tự sắp xếp.
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| content | TEXT | Không | — | Nội dung câu hỏi. |
+| question_type | question_type | Không | single_choice | Loại câu hỏi. |
+| explanation | TEXT | Có | NULL | Giải thích, chỉ trả cho học viên sau khi nộp bài (BR-13). |
+| difficulty | difficulty | Không | medium | Độ khó. |
+| lesson_id | UUID | Có | NULL | Bài giảng tham chiếu, xóa đặt NULL. |
+| course_id | UUID | Có | NULL | Khóa học tham chiếu, xóa đặt NULL. |
+| created_by | UUID | Có | NULL | Người tạo, tham chiếu users. |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
+| updated_at | TIMESTAMPTZ | Không | now() | Thời điểm cập nhật. |
 
-**Bảng exams** là đề thi gắn với bài giảng hoặc khóa học `[Confirmed]`. Mỗi đề gồm id, tiêu đề, bài giảng và khóa học tham chiếu, loại đề kiểm tra xen kẽ hoặc bài tập cuối, thời gian giới hạn tính bằng phút trong đó 0 nghĩa là không giới hạn, điểm đạt từ 0 đến 100, số lần làm tối đa trong đó 0 nghĩa là không giới hạn, người tạo và các mốc thời gian.
+`[Derived]` — bảng cột suy ra từ mô tả nghiệp vụ, cần nhóm rà lại.
 
-**Bảng exam_questions** là liên kết nhiều nhiều giữa đề thi và câu hỏi. Khóa chính gồm cặp đề thi và câu hỏi, kèm thứ tự xuất hiện, điểm số từng câu và mốc thời gian xuất hiện trong video đối với kiểm tra xen kẽ `[Derived / Proposed]`.
+**Bảng question_options** lưu các phương án trắc nghiệm.
 
-**Bảng exercise_attempts** ghi nhận lượt làm bài `[Confirmed]`. Mỗi bản ghi gồm id, đề thi, học viên, số thứ tự lần làm, điểm số, điểm tối đa, dấu hiệu đạt, trạng thái, thời điểm bắt đầu và thời điểm nộp, với ràng buộc duy nhất theo bộ đề thi, học viên và số thứ tự lần làm.
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| question_id | UUID | Không | — | Khóa ngoại tới questions, xóa xếp tầng. |
+| label | VARCHAR(5) | Có | NULL | Nhãn hiển thị như A, B, C, D. |
+| content | TEXT | Không | — | Nội dung phương án. |
+| is_correct | BOOLEAN | Không | FALSE | Dấu hiệu đáp án đúng; không bao giờ trả cho học viên trước khi nộp. |
+| order_index | INTEGER | Không | 0 | Thứ tự sắp xếp phương án. |
 
-**Bảng attempt_answers** lưu câu trả lời chi tiết theo từng câu hỏi. Mỗi bản ghi gồm id, lần làm bài, câu hỏi, danh sách đáp án đã chọn dạng JSON, nội dung tự luận, dấu hiệu đúng sai và điểm thành phần, với ràng buộc duy nhất theo cặp lần làm bài và câu hỏi.
+Ràng buộc duy nhất theo cặp (question_id, order_index).
+
+**Bảng exams** là đề thi gắn với bài giảng hoặc khóa học `[Confirmed]`.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| title | VARCHAR(255) | Không | — | Tiêu đề đề thi. |
+| lesson_id | UUID | Có | NULL | Bài giảng gắn đề, xóa xếp tầng. |
+| course_id | UUID | Có | NULL | Khóa học gắn đề, xóa xếp tầng. |
+| exam_type | exam_type | Không | end_lesson_exam | Loại đề thi. |
+| trigger_timestamp | DOUBLE PRECISION | Có | NULL | Mốc giây để video tự dừng và bật quiz; bắt buộc khi `exam_type = 'in_video_quiz'`. |
+| duration_minutes | INTEGER | Không | 0 | Thời gian giới hạn tính bằng phút, 0 nghĩa là không giới hạn. |
+| passing_score | INTEGER | Không | 0 | Điểm đạt từ 0 đến 100. |
+| max_attempts | INTEGER | Không | 0 | Số lần làm tối đa, 0 nghĩa là không giới hạn. |
+| created_by | UUID | Có | NULL | Người tạo, tham chiếu users. |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
+| updated_at | TIMESTAMPTZ | Không | now() | Thời điểm cập nhật. |
+
+Ràng buộc: `CHECK (exam_type <> 'in_video_quiz' OR trigger_timestamp IS NOT NULL)`.
+
+`[Derived]` — `trigger_timestamp` trước đây chỉ xuất hiện trong tài liệu triển khai, nay được chính thức hoá vào lược đồ; cần nhóm rà lại.
+
+**Bảng exam_questions** là liên kết nhiều nhiều giữa đề thi và câu hỏi `[Derived / Proposed]`.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| exam_id | UUID | Không | — | Khóa ngoại tới exams, xóa xếp tầng. Phần đầu khóa chính. |
+| question_id | UUID | Không | — | Khóa ngoại tới questions, xóa xếp tầng. Phần sau khóa chính. |
+| order_index | INTEGER | Không | 0 | Thứ tự xuất hiện trong đề. |
+| points | INTEGER | Không | 1 | Điểm số của câu trong đề, CHECK points >= 0. |
+| trigger_timestamp | DOUBLE PRECISION | Có | NULL | Mốc giây xuất hiện riêng của từng câu ở quiz giữa video. |
+
+Khóa chính là cặp (exam_id, question_id).
+
+**Bảng exercise_attempts** ghi nhận lượt làm bài `[Confirmed]`.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| exam_id | UUID | Không | — | Đề thi, xóa xếp tầng. |
+| student_id | UUID | Không | — | Học viên làm bài, xóa xếp tầng. |
+| attempt_number | INTEGER | Không | 1 | Số thứ tự lần làm, bắt đầu từ 1. |
+| score | INTEGER | Có | NULL | Điểm đạt được, NULL khi chưa chấm. |
+| max_score | INTEGER | Không | 0 | Tổng điểm tối đa của đề. |
+| is_passed | BOOLEAN | Có | NULL | Kết quả đạt hay chưa, NULL khi chưa chấm. |
+| status | attempt_status | Không | in_progress | Trạng thái lượt làm bài. |
+| started_at | TIMESTAMPTZ | Không | now() | Thời điểm bắt đầu. |
+| submitted_at | TIMESTAMPTZ | Có | NULL | Thời điểm nộp bài. |
+
+Ràng buộc duy nhất theo bộ (exam_id, student_id, attempt_number). Khi vượt quá `exams.max_attempts`, trả `403 MAX_ATTEMPTS_REACHED` theo hợp đồng `08` mục 6.4.
+
+**Bảng attempt_answers** lưu câu trả lời chi tiết theo từng câu hỏi.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| attempt_id | UUID | Không | — | Lần làm bài, xóa xếp tầng. |
+| question_id | UUID | Không | — | Câu hỏi được trả lời. |
+| selected_option_ids | JSONB | Có | NULL | Danh sách UUID phương án đã chọn (dùng cho trắc nghiệm). |
+| essay_answer | TEXT | Có | NULL | Nội dung trả lời tự luận. |
+| is_correct | BOOLEAN | Có | NULL | Đúng/sai, NULL với câu tự luận chưa chấm. |
+| points_awarded | INTEGER | Không | 0 | Điểm thành phần được cộng. |
+
+Ràng buộc duy nhất theo cặp (attempt_id, question_id).
 
 **Bảng orders** ghi nhận giao dịch mua khóa học `[Dự kiến — Chưa cam kết chính thức]`.
 
@@ -369,18 +535,75 @@ Cơ chế idempotency của webhook PayOS bảo vệ bằng quy tắc chuyển t
 | question | TEXT | Không | — | Nội dung câu hỏi, tối thiểu 5 ký tự. |
 | answer | TEXT | Có | NULL | Nội dung trả lời, NULL khi lỗi mô hình. |
 | sources | JSONB | Có | NULL | Danh sách nguồn trích dẫn — dùng đúng cấu trúc `AISource` của hợp đồng `08` mục 4.1 (gồm `chunk_id`, `text`, `start_time`, `end_time`, `relevance_score`). |
-| current_timestamp | DOUBLE PRECISION | Có | NULL | Mốc video tại lúc hỏi (giây). |
+| video_position_seconds | DOUBLE PRECISION | Có | NULL | Mốc video tại lúc hỏi (giây). Đổi tên từ `current_timestamp` để tránh trùng với hàm SQL chuẩn. |
 | response_time_ms | INTEGER | Có | NULL | Thời gian phản hồi (mili giây). |
 | feedback | ai_feedback | Không | none | `none`, `up`, `down` — ghi nhận qua endpoint 4.4. |
+| prompt_version | VARCHAR(20) | Có | NULL | Phiên bản mẫu nhắc đã dùng, lấy từ `app/adapters/ai/prompts/`. |
 | created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
 
 Hạn mức 50 câu hỏi mỗi ngày cho mỗi học viên `[Derived / Proposed]`; khi vượt hạn mức trả về 429 `AI_QUOTA_EXCEEDED` kèm số lượt còn lại — khớp mã lỗi trong hợp đồng `08`.
 
-**Bảng ai_summaries** lưu tóm tắt AI `[Confirmed]`. Mỗi bản ghi gồm id, bài giảng, phạm vi toàn bài hoặc theo chương, chương tham chiếu, nội dung tóm tắt, mô hình đã sử dụng, phiên bản transcript dùng để sinh tóm tắt phục vụ bộ nhớ đệm và các mốc thời gian, với ràng buộc duy nhất theo bộ bài giảng, phạm vi, chương và phiên bản transcript.
+**Bảng ai_summaries** lưu tóm tắt AI `[Confirmed]`.
 
-**Bảng notifications** phục vụ thông báo `[Confirmed]`. Mỗi bản ghi gồm id, người dùng có thể rỗng để gửi quảng bá, tiêu đề, nội dung, loại thông báo, trạng thái đã đọc, đường dẫn hành động và thời điểm tạo.
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| lesson_id | UUID | Không | — | Bài giảng được tóm tắt, xóa xếp tầng. |
+| scope | summary_scope | Không | lesson | Phạm vi tóm tắt toàn bài hoặc theo chương. |
+| chapter_id | UUID | Có | NULL | Chương tham chiếu khi `scope = 'chapter'`, xóa đặt NULL. |
+| content | TEXT | Không | — | Nội dung tóm tắt gồm bullet points và mốc thời gian chính. |
+| model | VARCHAR(50) | Có | NULL | Mô hình đã sinh tóm tắt. |
+| transcript_version | INTEGER | Không | 1 | Phiên bản transcript dùng để sinh tóm tắt, phục vụ bộ nhớ đệm (BR-11). |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
 
-**Bảng system_settings** lưu tham số vận hành `[Derived / Proposed]`. Khóa chính là tên tham số dạng chuỗi, giá trị là JSON và thời điểm cập nhật. Các khóa đã chốt nội bộ gồm phiên bản nhúng hiệu lực là v1, Top-K bằng 5, ngưỡng 0.72, cửa sổ tăng trọng thời gian 120 giây, hạn mức hỏi đáp 50 mỗi ngày, hạn mức tóm tắt 10 mỗi ngày, địa chỉ lưu trữ và mô hình ngôn ngữ chính.
+Ràng buộc duy nhất theo bộ (lesson_id, scope, chapter_id, transcript_version).
+
+**Bảng notifications** phục vụ thông báo `[Confirmed]`.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| id | UUID | Không | Sinh ngẫu nhiên | Khóa chính. |
+| user_id | UUID | Có | NULL | Người nhận; NULL nghĩa là thông báo quảng bá cho mọi người dùng. |
+| title | VARCHAR(255) | Không | — | Tiêu đề thông báo. |
+| content | TEXT | Không | — | Nội dung thông báo. |
+| type | notification_type | Không | system | Loại thông báo. |
+| is_read | BOOLEAN | Không | FALSE | Đã đọc hay chưa. |
+| action_url | TEXT | Có | NULL | Đường dẫn hành động khi người dùng nhấn vào. |
+| created_at | TIMESTAMPTZ | Không | now() | Thời điểm tạo. |
+
+Phạm vi: chỉ thông báo **trong ứng dụng**. Thông báo do sự kiện backend sinh ra (ghi danh thành công, pipeline video hoàn tất hoặc thất bại, khóa học mới được xuất bản). Giai đoạn hiện tại **không** làm push notification nên không lưu device token.
+
+**Bảng system_settings** lưu tham số vận hành `[Derived / Proposed]`.
+
+| Cột | Kiểu dữ liệu | Cho phép rỗng | Mặc định | Mô tả |
+|---|---|---|---|---|
+| key | VARCHAR(100) | Không | — | Khóa chính, tên tham số dạng snake_case. |
+| value | JSONB | Không | — | Giá trị tham số. |
+| updated_at | TIMESTAMPTZ | Không | now() | Thời điểm cập nhật. |
+
+Danh sách khóa đã chốt (tên khóa là nguồn duy nhất, dùng thống nhất giữa service và seed):
+
+| Khóa | Ý nghĩa | Giá trị mặc định |
+|---|---|---|
+| `embedding_active_version` | Phiên bản nhúng đang phục vụ | `v1` |
+| `embedding_dim` | Số chiều véc-tơ | `1536` |
+| `retrieval_top_k` | Số ứng viên tối đa | `5` |
+| `retrieval_similarity_threshold` | Ngưỡng tương đồng tối thiểu | `0.72` |
+| `retrieval_time_window_seconds` | Cửa sổ tăng trọng thời gian | `120` |
+| `retrieval_time_weight` | Trọng số tăng trọng thời gian `w` | `0.05` |
+| `ai_qa_daily_limit` | Hạn mức hỏi đáp mỗi ngày mỗi học viên | `50` |
+| `ai_summary_daily_limit` | Hạn mức tóm tắt mỗi ngày mỗi học viên | `10` |
+| `chunk_size_tokens` | Kích thước chunk | `500` |
+| `chunk_overlap_tokens` | Độ chồng lấp chunk | `90` |
+| `chunk_config_version` | Phiên bản cấu hình chunk | `c1` |
+| `upload_max_part_bytes` | Giới hạn mỗi phần tải lên | `209715200` |
+| `upload_max_total_bytes` | Giới hạn toàn bộ video | `5368709120` |
+| `order_ttl_seconds` | Thời hạn đơn hàng | `900` |
+| `storage_public_base_url` | Tên miền công khai của R2 | *(theo môi trường)* |
+| `llm_primary_model` | Mô hình ngôn ngữ chính | `gpt-4o-mini` |
+| `llm_fallback_model` | Mô hình ngôn ngữ dự phòng | `gemini-1.5-flash` |
+
+`[Derived]` — tên khóa được chuẩn hoá trong lần cập nhật này, cần nhóm rà lại trước khi seed.
 
 ---
 
@@ -550,7 +773,7 @@ Công cụ Alembic được sử dụng để quản lý di trú lược đồ c
 6. **DE-06 Phạm vi giai đoạn 2 [TBD]:** Đánh giá sao, slide bài giảng, báo cáo phân tích nâng cao, giám sát nâng cao và nhận dạng giọng nói tự triển khai thuộc giai đoạn 2. Phạm vi Đồ án 1 chỉ giữ thống kê câu hỏi trí tuệ nhân tạo và doanh thu cơ bản đã có trong hợp đồng.
 7. **DE-07 Ràng buộc lập chỉ mục lại [Confirmed — Chốt ngày 16/09/2026]:** Bảng `lesson_chunks` thêm cột `transcript_version` và cờ `is_active`; ràng buộc duy nhất đổi thành bộ (lesson_id, transcript_version, chunk_config_version, chunk_index) để chunk thế hệ mới và cũ cùng tồn tại khi lập chỉ mục lại mà không gián đoạn phục vụ. Hợp đồng `08` đồng bộ: loại bỏ enum trạng thái pipeline 7 giá trị tại đối tượng lesson, tham chiếu về `overall_status` và `PipelineStep`.
 8. **DE-08 Bổ sung hợp đồng [Confirmed — Chốt ngày 16/09/2026]:** Hợp đồng `08` bổ sung endpoint webhook PayOS (`POST /api/webhooks/payos`, xác thực HMAC, idempotent), endpoint phản hồi AI (`POST /api/ai-messages/{message_id}/feedback`), trường `chunk_id` trong `AISource`, và quy ước response lỗi tập trung. Kiến trúc `10` ghi nhận quy tắc idempotency và tính nguyên tử của webhook.
-9. **DE-09 Hằng số vận hành [Confirmed — Chốt nội bộ]:** Các giá trị dùng chung được chốt tại một nguồn duy nhất là bảng `system_settings`: phiên bản nhúng hiệu lực v1 (1536 chiều, cosine), Top-K bằng 5, ngưỡng tương đồng 0.72, cửa sổ tăng trọng thời gian 120 giây, hạn mức hỏi đáp 50 câu/ngày/học viên và hạn mức tóm tắt 10 lượt/ngày/học viên. Kích thước chunk 500 token với độ chồng lấp 80–100 token. Token truy cập 900 giây; token làm mới 7 ngày cho di động và 24 giờ cho quản trị viên; OTP 300 giây với tối đa 5 lần nhập sai trong 15 phút; đơn hàng hết hạn sau 15 phút. Giới hạn tải lên gồm mỗi phần dưới 200MB và toàn bộ video tối đa 5GB. Thời gian chờ mô hình AI là 30 giây cho mỗi lần gọi và tối đa 60 giây cho cả chuỗi chính kèm dự phòng. Trang quản trị polling trạng thái pipeline mỗi 10 giây, máy khách polling trạng thái thanh toán mỗi 3 giây.
+9. **DE-09 Hằng số vận hành [Confirmed — Chốt nội bộ]:** Các giá trị dùng chung được chốt tại một nguồn duy nhất là bảng `system_settings` (danh sách khóa ở mục 5.5): phiên bản nhúng hiệu lực v1 (1536 chiều, cosine), Top-K bằng 5, ngưỡng tương đồng 0.72, cửa sổ tăng trọng thời gian 120 giây với trọng số `w = 0.05`, hạn mức hỏi đáp 50 câu/ngày/học viên và hạn mức tóm tắt 10 lượt/ngày/học viên. Kích thước chunk 500 token với độ chồng lấp 80–100 token (giá trị mặc định dùng khi seed là 90), tokenizer là `tiktoken` với bảng mã `cl100k_base`. Token truy cập 900 giây; token làm mới 7 ngày cho di động và 24 giờ cho quản trị viên; OTP 300 giây với tối đa 5 lần nhập sai trong 15 phút; đơn hàng hết hạn sau 15 phút. Giới hạn tải lên gồm mỗi phần dưới 200MB và toàn bộ video tối đa 5GB. Thời gian chờ mô hình AI là 30 giây cho mỗi lần gọi và tối đa 60 giây cho cả chuỗi chính kèm dự phòng. Trang quản trị polling trạng thái pipeline mỗi 10 giây, máy khách polling trạng thái thanh toán mỗi 3 giây. Thời gian trong phụ đề và vị trí xem sai số cộng trừ 0.5 giây. Múi giờ nghiệp vụ dùng cho hạn mức theo ngày và thống kê là `Asia/Ho_Chi_Minh` (UTC+7).
 
 ---
 

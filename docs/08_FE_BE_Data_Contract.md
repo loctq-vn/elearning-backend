@@ -43,7 +43,7 @@ Bảng mã lỗi chuẩn toàn hệ thống (các mục sau chỉ tham chiếu, 
 | `NOT_FOUND` | 404 | Tài nguyên |
 | `EMAIL_ALREADY_EXISTS`, `CONFLICT_*`, `ALREADY_*` | 409 | Xung đột trạng thái |
 | `AI_QUOTA_EXCEEDED` | 429 | Hết hạn mức hỏi đáp/tóm tắt trong ngày |
-| `AI_OUT_OF_SCOPE` | 422 | Hỏi ngoài phạm vi bài giảng |
+| `AI_OUT_OF_SCOPE` | 422 | **(ngừng dùng)** — trường hợp hỏi ngoài phạm vi nay trả HTTP 200 kèm `is_out_of_scope = true`; giữ dòng này để tương thích tài liệu cũ |
 | `SUMMARY_TOO_SHORT` / `TRANSCRIPT_TOO_SHORT` | 400 | Nội dung quá ngắn để tóm tắt |
 | `FILE_TOO_LARGE`, `INVALID_FILE_FORMAT` | 413 / 400 | Tải lên |
 | `RATE_LIMITED` | 429 | Giới hạn tần suất |
@@ -819,7 +819,7 @@ Bảng mã lỗi chuẩn toàn hệ thống (các mục sau chỉ tham chiếu, 
 | Field | Kiểu | Bắt buộc | Mô tả |
 |-------|------|:---:|-------|
 | `question` | `string` | ✅ | Câu hỏi, 5–500 ký tự |
-| `current_timestamp` | `float` | ✅ | Vị trí video hiện tại (giây) — Backend dùng để khoanh vùng ngữ cảnh RAG |
+| `video_position_seconds` | `float` | ✅ | Vị trí video hiện tại (giây) — Backend dùng để khoanh vùng ngữ cảnh RAG. Đổi tên từ `current_timestamp` để tránh trùng với hàm SQL chuẩn. |
 | `chat_history_ids` | `array[string]?` | ❌ | Danh sách ID tin nhắn trước (nếu cần context multi-turn) |
 
 **BE trả về (Response 200):**
@@ -832,6 +832,13 @@ Bảng mã lỗi chuẩn toàn hệ thống (các mục sau chỉ tham chiếu, 
 | `processing_time` | `float` | Thời gian xử lý (giây) |
 | `questions_remaining` | `int` | Số lượt hỏi còn lại trong ngày |
 | `daily_limit` | `int` | Giới hạn hỏi/ngày |
+| `is_out_of_scope` | `boolean` | `true` khi câu hỏi không có căn cứ trong bài giảng (BR-10); khi đó `answer` là câu từ chối chuẩn và `sources` là mảng rỗng |
+
+> Khi không có đoạn transcript nào đạt ngưỡng tương đồng 0.72, Backend **không** gọi mô hình ngôn ngữ mà trả ngay HTTP **200** kèm `is_out_of_scope = true`. Đây là kết quả nghiệp vụ bình thường, không phải lỗi. Mã lỗi `AI_OUT_OF_SCOPE` không còn được trả về cho trường hợp này.
+>
+> Câu hỏi bị từ chối **vẫn được ghi** vào `ai_qa_logs` và **vẫn tính** vào hạn mức 50 câu/ngày.
+>
+> Hạn mức theo ngày được tính theo múi giờ `Asia/Ho_Chi_Minh` (UTC+7), reset lúc 00:00 giờ Việt Nam.
 
 **Object `AISource`:**
 
@@ -2052,6 +2059,264 @@ Tất cả response lỗi tuân theo format thống nhất:
 > `❌*` = Không cần auth nhưng nếu có token thì trả thêm enrollment info.
 
 ---
+
+## PHỤ LỤC E — MA TRẬN PHÂN QUYỀN THEO ENDPOINT
+
+> Quy ước: **Auth** = có yêu cầu đăng nhập không · **Vai trò** = `student` hoặc `admin` · **Ghi danh** = có kiểm tra quyền ghi danh hoặc bài học thử không · **Sở hữu** = có kiểm tra tài nguyên thuộc về chính người gọi không.
+> Đây là **nguồn duy nhất** cho tầng middleware/permission. Chỉ kiểm tra `Auth` mà bỏ qua `Ghi danh` hoặc `Sở hữu` là **lỗi bảo mật**. `[Derived]` — cần nhóm rà lại.
+
+| # | Endpoint | Auth | Vai trò | Ghi danh | Sở hữu |
+|---|---|:---:|---|:---:|:---:|
+| 1.1 | `POST /api/auth/register` | ❌ | — | ❌ | ❌ |
+| 1.2 | `POST /api/auth/verify-otp` | ❌ | — | ❌ | ❌ |
+| 1.3 | `POST /api/auth/resend-otp` | ❌ | — | ❌ | ❌ |
+| 1.4 | `POST /api/auth/login` | ❌ | — | ❌ | ❌ |
+| 1.5 | `POST /api/auth/refresh` | ❌ | — | ❌ | ❌ |
+| 1.6 | `POST /api/auth/logout` | ✅ | any | ❌ | ❌ |
+| 1.7 | `POST /api/auth/forgot-password` | ❌ | — | ❌ | ❌ |
+| 1.8 | `POST /api/auth/reset-password` | ❌ | — | ❌ | ❌ |
+| 2.1 | `GET /api/courses/featured` | ❌ | — | ❌ | ❌ |
+| 2.2 | `GET /api/progress/continue` | ✅ | student | ❌ | ✅ |
+| 2.3 | `GET /api/courses` | ❌ | — | ❌ | ❌ |
+| 2.4 | `GET /api/categories` | ❌ | — | ❌ | ❌ |
+| 2.5 | `GET /api/courses/{course_id}` | ❌* | — | ❌ | ❌ |
+| 2.6 | `POST /api/courses/{course_id}/enroll` | ✅ | student | ❌ | ✅ |
+| 2.7 | `GET /api/lessons/{lesson_id}` | ✅ | student | ✅ (hoặc bài học thử) | ❌ |
+| 2.8 | `GET /api/my-courses` | ✅ | student | ❌ | ✅ |
+| 2.9 | `POST /api/admin/courses` | ✅ | admin | ❌ | ❌ |
+| 2.10 | `PUT /api/admin/courses/{course_id}` | ✅ | admin | ❌ | ❌ |
+| 2.11 | `DELETE /api/admin/courses/{course_id}` | ✅ | admin | ❌ | ❌ |
+| 2.12a | `POST /api/admin/courses/{course_id}/chapters` | ✅ | admin | ❌ | ❌ |
+| 2.12b | `PUT /api/admin/chapters/{chapter_id}` | ✅ | admin | ❌ | ❌ |
+| 2.12c | `DELETE /api/admin/chapters/{chapter_id}` | ✅ | admin | ❌ | ❌ |
+| 2.12d | `PUT /api/admin/courses/{course_id}/reorder` | ✅ | admin | ❌ | ❌ |
+| 2.13a | `POST /api/admin/chapters/{chapter_id}/lessons` | ✅ | admin | ❌ | ❌ |
+| 2.13b | `PUT /api/admin/lessons/{lesson_id}` | ✅ | admin | ❌ | ❌ |
+| 2.13c | `DELETE /api/admin/lessons/{lesson_id}` | ✅ | admin | ❌ | ❌ |
+| 3.1 | `POST /api/progress` | ✅ | student | ✅ | ✅ |
+| 3.2 | `GET /api/progress/overview` | ✅ | student | ❌ | ✅ |
+| 4.1 | `POST /api/lessons/{lesson_id}/ask` | ✅ | student | ✅ | ❌ |
+| 4.2 | `GET /api/lessons/{lesson_id}/chat-history` | ✅ | student | ✅ | ✅ |
+| 4.3 | `GET /api/lessons/{lesson_id}/suggested-questions` | ✅ | student | ✅ | ❌ |
+| 4.4 | `POST /api/ai-messages/{message_id}/feedback` | ✅ | student | ❌ | ✅ |
+| 5.1 | `POST /api/lessons/{lesson_id}/summarize` | ✅ | student | ✅ | ❌ |
+| 6.1 | `GET /api/quizzes/{quiz_id}` | ✅ | student | ✅ | ❌ |
+| 6.2 | `POST /api/quiz-responses` | ✅ | student | ✅ | ✅ |
+| 6.3 | `GET /api/exercises/{exercise_id}` | ✅ | student | ✅ | ❌ |
+| 6.4 | `POST /api/exercises/{exercise_id}/submit` | ✅ | student | ✅ | ✅ |
+| 6.5a | `GET /api/admin/questions` | ✅ | admin | ❌ | ❌ |
+| 6.5b | `POST /api/admin/questions` | ✅ | admin | ❌ | ❌ |
+| 6.5c | `PUT /api/admin/questions/{question_id}` | ✅ | admin | ❌ | ❌ |
+| 6.5d | `DELETE /api/admin/questions/{question_id}` | ✅ | admin | ❌ | ❌ |
+| 6.6a | `POST /api/admin/exams` | ✅ | admin | ❌ | ❌ |
+| 6.6b | `PUT /api/admin/exams/{exam_id}` | ✅ | admin | ❌ | ❌ |
+
+> `❌*` = không bắt buộc token, nhưng nếu có token hợp lệ thì trả thêm thông tin ghi danh và tiến độ của học viên.
+> Riêng `GET /api/courses` (2.3): khi người gọi là `admin` thì trả cả khóa học `draft` và `hidden`; học viên chỉ thấy `published`.
+
+| 7.1 | `GET /api/lessons/{lesson_id}/notes` | ✅ | student | ✅ | ✅ |
+| 7.2 | `POST /api/lessons/{lesson_id}/notes` | ✅ | student | ✅ | ✅ |
+| 7.3 | `PUT /api/notes/{note_id}` | ✅ | student | ❌ | ✅ |
+| 7.4 | `DELETE /api/notes/{note_id}` | ✅ | student | ❌ | ✅ |
+| 8.1 | `POST /api/orders` | ✅ | student | ❌ | ✅ |
+| 8.2 | `GET /api/orders/{order_id}/status` | ✅ | student | ❌ | ✅ |
+| 8.3 | `PUT /api/orders/{order_id}/cancel` | ✅ | student | ❌ | ✅ |
+| 8.4 | `POST /api/webhooks/payos` | ❌ | HMAC (server-to-server) | ❌ | ❌ |
+| 9.1 | `POST /api/admin/videos/upload` | ✅ | admin | ❌ | ❌ |
+| 9.1b | `POST /api/admin/videos/upload/init` | ✅ | admin | ❌ | ❌ |
+| 9.2 | `GET /api/admin/pipeline/{video_id}/status` | ✅ | admin | ❌ | ❌ |
+| 9.3 | `GET /api/admin/pipeline` | ✅ | admin | ❌ | ❌ |
+| 9.4 | `POST /api/admin/pipeline/{video_id}/retry` | ✅ | admin | ❌ | ❌ |
+| 9.5 | `PUT /api/admin/pipeline/{video_id}/cancel` | ✅ | admin | ❌ | ❌ |
+| 9.6a | `GET /api/admin/lessons/{lesson_id}/transcript` | ✅ | admin | ❌ | ❌ |
+| 9.6b | `PUT /api/admin/transcripts/{transcript_id}` | ✅ | admin | ❌ | ❌ |
+| 10.1 | `GET /api/notifications/unread-count` | ✅ | any | ❌ | ✅ |
+| 10.2 | `GET /api/notifications` | ✅ | any | ❌ | ✅ |
+| 10.3 | `PUT /api/notifications/{notification_id}/read` | ✅ | any | ❌ | ✅ |
+| 11.1 | `GET /api/users/me` | ✅ | any | ❌ | ✅ |
+| 11.2 | `PUT /api/users/me` | ✅ | any | ❌ | ✅ |
+| 11.3 | `PUT /api/users/me/password` | ✅ | any | ❌ | ✅ |
+| 11.4a | `GET /api/admin/users` | ✅ | admin | ❌ | ❌ |
+| 11.4b | `PUT /api/admin/users/{user_id}/lock` | ✅ | admin | ❌ | ❌ |
+| 11.4c | `PUT /api/admin/users/{user_id}/unlock` | ✅ | admin | ❌ | ❌ |
+| 12.1 | `GET /api/admin/dashboard` | ✅ | admin | ❌ | ❌ |
+| 12.2a | `GET /api/admin/revenue/summary` | ✅ | admin | ❌ | ❌ |
+| 12.2b | `GET /api/admin/revenue/chart` | ✅ | admin | ❌ | ❌ |
+| 12.2c | `GET /api/admin/revenue/transactions` | ✅ | admin | ❌ | ❌ |
+| 12.3 | `GET /api/admin/analytics/students` | ✅ | admin | ❌ | ❌ |
+| 12.4a | `GET /api/admin/analytics/ai-questions` | ✅ | admin | ❌ | ❌ |
+| 12.4b | `GET /api/admin/analytics/ai-questions/top` | ✅ | admin | ❌ | ❌ |
+
+> Với 10.1–10.3: học viên chỉ thấy thông báo của chính mình cộng với thông báo quảng bá (`user_id IS NULL`); không được đọc hoặc đánh dấu đã đọc thông báo của người khác.
+> Ba quy tắc xoá mềm bắt buộc: (1) mọi truy vấn đọc public luôn lọc `deleted_at IS NULL`; (2) xoá mềm khóa học thì ẩn khỏi danh sách nhưng **giữ nguyên** ghi danh và tiến độ cho học viên đã mua; (3) chỉ mục duy nhất `LOWER(email)` là **toàn cục** nên tài khoản đã xoá mềm vẫn giữ email — phải mở lại tài khoản thay vì đăng ký mới.
+
+## PHỤ LỤC F — VÍ DỤ JSON MẪU
+
+> Các ví dụ dưới đây chỉ dùng trường đã định nghĩa trong tài liệu này; dùng làm mẫu ràng buộc shape cho Pydantic schema và cho kiểm thử tích hợp.
+
+**F.1 — 4.1 Hỏi AI (trong phạm vi bài giảng, HTTP 200):**
+
+```json
+{
+  "data": {
+    "id": "3f1c8b2e-9a54-4f7d-8c31-2b6e5a0d7f19",
+    "answer": "Khái niệm **đệ quy** là kỹ thuật một hàm gọi lại chính nó...",
+    "sources": [
+      {
+        "chunk_id": "b7d2f0a1-4c63-4e0a-9f2b-6d81c4a93e57",
+        "text": "Đệ quy là kỹ thuật trong đó một hàm gọi lại chính nó để giải bài toán nhỏ hơn...",
+        "start_time": 412.5,
+        "end_time": 445.0,
+        "relevance_score": 0.86
+      }
+    ],
+    "processing_time": 2.41,
+    "questions_remaining": 47,
+    "daily_limit": 50,
+    "is_out_of_scope": false
+  },
+  "message": "OK"
+}
+```
+
+**F.2 — 4.1 Hỏi AI ngoài phạm vi bài giảng (vẫn HTTP 200):**
+
+```json
+{
+  "data": {
+    "id": "9a02e1f4-77bd-4c9a-8e15-0c3d6b71aa42",
+    "answer": "Nội dung này không nằm trong phạm vi bài giảng hiện tại nên mình chưa thể trả lời. Bạn hãy hỏi về nội dung bài học đang xem nhé.",
+    "sources": [],
+    "processing_time": 0.12,
+    "questions_remaining": 46,
+    "daily_limit": 50,
+    "is_out_of_scope": true
+  },
+  "message": "OK"
+}
+```
+
+**F.3 — 6.4 Nộp bài tập (đã chấm tự động):**
+
+```json
+{
+  "data": {
+    "attempt_id": "c41d5e77-2b19-4a83-9d0f-5e17b2c8a340",
+    "status": "graded",
+    "score": 8,
+    "attempts_remaining": 1,
+    "details": [
+      {
+        "question_id": "e5b3a920-6c14-4f2d-8b71-1d94a7c30e58",
+        "correct": true,
+        "correct_answer": "A",
+        "explanation": "Đáp án A đúng vì độ phức tạp trung bình là O(n log n)."
+      }
+    ]
+  },
+  "message": "OK"
+}
+```
+
+**F.4 — 12.4a Thống kê câu hỏi AI (Admin):**
+
+```json
+{
+  "data": {
+    "total_questions": 1840,
+    "questions_today": 73,
+    "avg_response_time": 2.6,
+    "satisfaction_rate": 91.4,
+    "daily_chart": [{ "date": "2026-09-24", "count": 65 }],
+    "by_lesson_chart": [{ "lesson_title": "Bài 3: Đệ quy", "count": 212 }]
+  },
+  "message": "OK"
+}
+```
+
+**F.5 — 12.4b Câu hỏi AI phổ biến (danh sách phân trang):**
+
+```json
+{
+  "data": [
+    {
+      "id": "3f1c8b2e-9a54-4f7d-8c31-2b6e5a0d7f19",
+      "question": "Đệ quy khác vòng lặp ở điểm nào?",
+      "answer": "Đệ quy gọi lại chính hàm đang xử lý...",
+      "sources": [],
+      "lesson_title": "Bài 3: Đệ quy",
+      "ask_count": 37,
+      "thumbs_up": 21,
+      "thumbs_down": 2,
+      "created_at": "2026-09-12T03:20:11Z"
+    }
+  ],
+  "total": 37,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 2
+}
+```
+
+**F.6 — 6.3 Lấy bài tập cuối bài (dạng học viên làm bài, không lộ đáp án):**
+
+```json
+{
+  "data": {
+    "id": "7d8e9f01-3a2b-4c5d-8e6f-9012345678ab",
+    "title": "Bài tập cuối bài 3",
+    "time_limit": 900,
+    "passing_score": 70,
+    "max_attempts": 3,
+    "attempts_used": 1,
+    "questions": [
+      {
+        "question_id": "e5b3a920-6c14-4f2d-8b71-1d94a7c30e58",
+        "content": "Độ phức tạp trung bình của QuickSort là gì?",
+        "question_type": "single_choice",
+        "options": [
+          { "id": "12ab34cd-5678-4901-8234-5678901234ab", "label": "A", "content": "O(n log n)" }
+        ]
+      }
+    ]
+  },
+  "message": "OK"
+}
+```
+
+**F.7 — 2.3 Danh sách khóa học (phân trang):**
+
+```json
+{
+  "data": [
+    {
+      "id": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789",
+      "title": "Lập trình Python cơ bản",
+      "price": 0,
+      "status": "published"
+    }
+  ],
+  "total": 42,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 3
+}
+```
+
+**F.8 — Lỗi kiểm tra dữ liệu đầu vào (HTTP 400):**
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Dữ liệu gửi lên không hợp lệ.",
+    "details": {
+      "email": ["Email không đúng định dạng"],
+      "password": ["Mật khẩu phải có ít nhất 8 ký tự"]
+    }
+  }
+}
+```
 
 ## TỔNG HỢP THỐNG KÊ
 

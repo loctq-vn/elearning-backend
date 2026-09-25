@@ -265,7 +265,7 @@ Bạn là Backend Engineer phụ trách module Khảo thí (Exams & Quizzes). D�
 2. Repository & Service:
    - Quản trị viên: Đầy đủ CRUD ngân hàng câu hỏi và tạo đề thi. Cho phép gán quiz vào bài giảng kèm mốc thời gian xuất hiện trong video.
    - Học viên:
-     + Lấy đề quiz/bài tập: Kiểm tra quyền ghi danh. Kiểm tra giới hạn số lần làm bài (max_attempts), nếu vượt quá ném lỗi 400 EXAM_MAX_ATTEMPTS_REACHED. Tạo bản ghi exercise_attempts ở trạng thái 'in_progress'.
+     + Lấy đề quiz/bài tập: Kiểm tra quyền ghi danh. Kiểm tra giới hạn số lần làm bài (max_attempts), nếu vượt quá ném lỗi 403 MAX_ATTEMPTS_REACHED (mã lỗi chính thức theo hợp đồng 08 mục 6.4). Tạo bản ghi exercise_attempts ở trạng thái 'in_progress'.
      + Nộp bài (Submit):
        * So sánh selected_option_ids của học viên với question_options có is_correct = True.
        * Chấm điểm tự động tức thì cho các câu trắc nghiệm, tính tổng điểm đạt được và tỷ lệ phần trăm.
@@ -299,7 +299,7 @@ Bạn là Media & Pipeline Engineer. Dựa trên tài liệu 11_BE_AI_Pipeline_S
    - Hiện thực R2StorageAdapter dùng boto3 cấu hình tương thích S3 kết nối Cloudflare R2 (biến STORAGE_*), dùng cho mọi môi trường. Service/worker không gọi boto3 trực tiếp, chỉ gọi qua Storage Adapter — thiết kế tổng quát để sau này thay bằng AWS S3 (hướng migration tương lai) mà không sửa business logic.
 
 2. Tạo app/adapters/ai/whisper.py:
-   - Client gọi mô hình Whisper (qua AI Adapter) với tham số ngôn ngữ tiếng Việt (language="vi").
+   - Client gọi mô hình Whisper CHẠY CỤC BỘ qua AI Adapter bằng thư viện faster-whisper: model 'small', device 'auto', compute_type 'int8' khi chạy CPU (KHÔNG dùng float16 trên CPU), beam_size 5, vad_filter=True, language='vi'. Không cần cắt audio thủ công vì không có giới hạn dung lượng như khi gọi API.
    - Trả về danh sách các đoạn phiên âm gồm start_time (float), end_time (float), text (string). Đảm bảo sai số timestamp <= 0.5s theo quy tắc BR-15.
 
 3. Tạo app/workers/video_pipeline.py:
@@ -316,7 +316,7 @@ Bạn là Media & Pipeline Engineer. Dựa trên tài liệu 11_BE_AI_Pipeline_S
      + Lưu bản ghi transcripts (version=1, language='vi') và các transcript_segments vào DB.
      + Xóa ngay file audio.wav tạm để giải phóng bộ nhớ. Đánh dấu step 'transcribe' completed.
    - Quản lý lỗi & Retry:
-     + Nếu bất kỳ bước nào lỗi: Cập nhật status='failed' cho bước đó và overall_status='failed' cho bảng videos, lưu error_message chi tiết để Admin có thể kích hoạt chạy lại (Retry).
+     + Nếu bất kỳ bước nào lỗi: cập nhật attempt_count và next_attempt_at theo backoff 30 giây, 2 phút, 10 phút; sau 3 lần thất bại thì đặt status='failed' cho bước đó và overall_status='failed' cho bảng videos, lưu error_message chi tiết để Admin kích hoạt chạy lại (Retry). Khi chạy lại bước transcode phải xoá thư mục HLS dở trước khi ghi mới.
 
 4. Tạo app/modules/videos/ (schemas, service, router):
    - Endpoint POST /api/admin/videos/upload: Nhận video (hỗ trợ multipart chunked upload theo DE-01), tạo bản ghi video và 4 bước pipeline ở trạng thái 'pending', kích hoạt background worker.
@@ -359,9 +359,9 @@ Bạn là AI Engineer & RAG Specialist. Dựa trên tài liệu 11_BE_AI_Pipelin
      + Kiểm tra hạn ngạch: Kiểm tra số câu đã hỏi hôm nay của học viên trong ai_qa_logs (max 50 câu/ngày; nếu vượt ném 429 AI_QUOTA_EXCEEDED).
      + Sinh embedding câu hỏi (1536 dim).
      + Truy vấn pgvector trong lesson_chunks có lesson_id tương ứng và is_active = True:
-       * Sắp xếp theo cosine distance kết hợp hàm tăng trọng thời gian: ưu tiên các chunk có start_time gần current_timestamp trong vòng 120 giây (Time-weighting window).
+       * Sắp xếp theo khoảng cách hiệu dụng d' = d - w * max(0, 1 - |s - t| / W) với w = 0.05 và W = 120 giây; s là start_time của chunk, t là vị trí video học viên đang xem (đọc từ ai_qa_logs.video_position_seconds). Ngưỡng 0.72 áp dụng trên khoảng cách gốc d, KHÔNG áp dụng trên d'.
        * Lấy Top-5 chunk có similarity >= 0.72.
-     + Nếu không có chunk nào >= 0.72: Trả về câu trả lời mẫu từ chối ngoài phạm vi (AI_OUT_OF_SCOPE) theo BR-10.
+     + Nếu không có chunk nào >= 0.72: KHÔNG gọi mô hình ngôn ngữ. Trả HTTP 200 kèm is_out_of_scope=true, answer là câu từ chối cố định theo mẫu ngoài phạm vi và sources là mảng rỗng (BR-10). Vẫn ghi ai_qa_logs và vẫn tính vào hạn mức ngày.
      + Nếu có chunk: Ghép ngữ cảnh vào Prompt, gọi LLM, lưu vào ai_qa_logs, trả về câu trả lời kèm mảng sources (chunk_id, text, start_time, end_time, relevance_score).
    - Endpoint GET /api/lessons/{lesson_id}/chat-history: Lấy lịch sử hỏi đáp.
    - Endpoint POST /api/ai-messages/{message_id}/feedback: Ghi nhận đánh giá 👍/👎 (up/down).
@@ -491,7 +491,7 @@ Bạn là Senior QA Automation Engineer. Dựa trên 08_FE_BE_Data_Contract.md v
 
 4. Tạo tests/test_ai_rag.py:
    - Test hỏi đáp AI: Gửi câu hỏi hợp lệ -> Trả về câu trả lời kèm danh sách trích dẫn sources có start_time, end_time.
-   - Test hỏi ngoài phạm vi bài giảng -> Nhận câu trả lời từ chối theo mẫu AI_OUT_OF_SCOPE (BR-10).
+   - Test hỏi ngoài phạm vi bài giảng -> Nhận HTTP 200 kèm is_out_of_scope=true, sources rỗng và câu trả lời từ chối theo mẫu (BR-10).
    - Test vượt hạn mức 50 câu hỏi/ngày -> Nhận lỗi 429 AI_QUOTA_EXCEEDED.
    - Test tóm tắt bài giảng: Kiểm tra cơ chế cache trả về is_cached=True cho lần gọi thứ hai (BR-11).
 

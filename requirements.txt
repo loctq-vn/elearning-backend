@@ -28,6 +28,10 @@ aiofiles>=23.2,<25.0
 boto3>=1.34,<2.0
 payos>=1.0,<2.0
 
+# --- Whisper cục bộ & đếm token ---
+faster-whisper>=1.0,<2.0
+tiktoken>=0.7,<1.0
+
 # --- Chất lượng mã & kiểm thử ---
 pytest>=8.0,<10.0
 pytest-asyncio>=0.23,<2.0
@@ -35,6 +39,6 @@ ruff>=0.5,<1.0
 mypy>=1.10,<2.0
 
 # --- Tùy chọn ---
-# Mặc định Whisper được gọi qua API của nhà cung cấp nên không cần gói dưới đây.
+# Mặc định Whisper chạy cục bộ bằng faster-whisper (đã bật ở nhóm phụ thuộc phía trên).
 # Bỏ comment nếu muốn chạy Whisper cục bộ:
-# faster-whisper>=1.0,<2.0
+# faster-whisper đã được khai báo và bật ở nhóm phụ thuộc phía trên.

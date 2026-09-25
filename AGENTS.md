@@ -91,7 +91,8 @@ Router -> Middleware/Permission -> Service -> Repository -> Database
 **Thành công — danh sách phân trang:** `{ "data": [], "total": 0, "page": 1, "page_size": 20, "total_pages": 0 }`
 Query params chuẩn: `page` (mặc định 1), `page_size` (mặc định 20).
 
-**Nhóm mã lỗi:** `VALIDATION_ERROR` 400 · `UNAUTHORIZED`/`TOKEN_EXPIRED` 401 · `FORBIDDEN`/`NOT_ENROLLED` 403 · `NOT_FOUND` 404 · `EMAIL_ALREADY_EXISTS`/`CONFLICT_*`/`ALREADY_*` 409 · `AI_OUT_OF_SCOPE` 422 · `AI_QUOTA_EXCEEDED`/`RATE_LIMITED` 429 · `FILE_TOO_LARGE` 413 · `INVALID_FILE_FORMAT` 400 · `INTERNAL_ERROR`/`PAYMENT_GATEWAY_ERROR`/`AI_PROVIDER_ERROR` 500–502.
+**Nhóm mã lỗi:** `VALIDATION_ERROR` 400 · `UNAUTHORIZED`/`TOKEN_EXPIRED` 401 · `FORBIDDEN`/`NOT_ENROLLED` 403 · `NOT_FOUND` 404 · `EMAIL_ALREADY_EXISTS`/`CONFLICT_*`/`ALREADY_*` 409 · `AI_QUOTA_EXCEEDED`/`RATE_LIMITED` 429 · `FILE_TOO_LARGE` 413 · `INVALID_FILE_FORMAT` 400 · `INTERNAL_ERROR`/`PAYMENT_GATEWAY_ERROR`/`AI_PROVIDER_ERROR` 500–502.
+`AI_OUT_OF_SCOPE` (422) **đã ngừng dùng**: hỏi ngoài phạm vi trả HTTP **200** kèm `is_out_of_scope = true`.
 
 Tổng số endpoint theo hợp đồng `08`: **75**. Liệt kê đầy đủ ở PHỤ LỤC D của `docs/08`.
 
@@ -193,3 +194,62 @@ mypy app                                           # kiểm tra kiểu
 - [ ] Tên trường khớp `docs/08`; tên bảng/cột khớp `docs/09`.
 - [ ] Không có cấu hình cơ sở dữ liệu/lưu trữ cục bộ trong repo.
 - [ ] Thay đổi lược đồ đi kèm migration Alembic.
+
+---
+
+## 12. Quy Ước Dữ Liệu, Thời Gian & Vận Hành
+
+### 12.1 Thời gian và múi giờ
+- Múi giờ nghiệp vụ cho **hạn mức theo ngày** và **thống kê theo ngày** là `Asia/Ho_Chi_Minh` (UTC+7); reset lúc 00:00 giờ Việt Nam. Biến môi trường: `APP_TIMEZONE=Asia/Ho_Chi_Minh`.
+- Cột thời gian trong DB dùng `TIMESTAMPTZ`. API trả **ISO 8601 dạng UTC** (kết thúc bằng `Z`), ví dụ `2026-09-12T03:20:11Z`.
+- Mọi mốc thời gian trong video (vị trí xem, phụ đề, ghi chú) là **giây**, kiểu số thực. Cột `ai_qa_logs.video_position_seconds` (không dùng tên `current_timestamp`).
+
+### 12.2 Thứ tự sắp xếp mặc định của endpoint danh sách
+| Endpoint | Sắp xếp mặc định |
+|---|---|
+| `GET /api/courses` | `created_at DESC` |
+| `GET /api/my-courses` | `lesson_progress.updated_at DESC` |
+| `GET /api/progress/continue` | `lesson_progress.updated_at DESC` |
+| `GET /api/lessons/{id}/chat-history` | `created_at ASC` |
+| `GET /api/lessons/{id}/notes` | `timestamp ASC` |
+| `GET /api/notifications` | `created_at DESC` |
+| `GET /api/admin/questions` | `created_at DESC` |
+| `GET /api/admin/users` | `created_at DESC` |
+| `GET /api/admin/revenue/transactions` | `paid_at DESC` |
+| `GET /api/admin/analytics/ai-questions/top` | `ask_count DESC` |
+
+### 12.3 Xoá mềm
+- Mọi truy vấn đọc public **luôn** lọc `deleted_at IS NULL`.
+- Xoá mềm khóa học: ẩn khỏi danh sách nhưng **giữ nguyên** ghi danh và tiến độ cho học viên đã mua.
+- Chỉ mục duy nhất `LOWER(email)` là **toàn cục**: tài khoản đã xoá mềm vẫn giữ email nên **không** cho đăng ký lại cùng email; phải mở lại tài khoản.
+
+### 12.4 Hạn mức tần suất (rate limit)
+| Nhóm | Giới hạn |
+|---|---|
+| `login` | 5 lần / 15 phút / (IP + email) |
+| `register`, `resend-otp` | 3 lần / giờ / email |
+| `verify-otp` | 5 lần / 15 phút / email (khớp BR-02) |
+| `ask` (AI) | 10 lần / phút / user, tách biệt với hạn mức 50 câu/ngày |
+| `summarize` | 5 lần / giờ / user |
+| `upload init` | 20 lần / giờ / user |
+| `webhook PayOS` | không giới hạn (đã xác thực HMAC) |
+
+### 12.5 Quy tắc trả lời AI
+- Không có chunk nào đạt ngưỡng 0.72 → **không gọi LLM**, trả HTTP **200** kèm `is_out_of_scope = true`, `sources = []`. Không dùng mã lỗi `AI_OUT_OF_SCOPE`.
+- Câu hỏi bị từ chối **vẫn** ghi `ai_qa_logs` và **vẫn** tính vào hạn mức ngày.
+- Đếm token khi chia chunk dùng `tiktoken` với bảng mã `cl100k_base`.
+
+### 12.6 Vòng đời job (worker)
+- Nhận việc bằng `FOR UPDATE SKIP LOCKED`; lease 30 phút; heartbeat 30 giây; polling 5 giây.
+- Thử lại tối đa **3 lần** với backoff **30 giây → 2 phút → 10 phút**; sau đó `failed` và phải retry thủ công.
+- Job còn `processing` mà `lease_expires_at < now()` bị coi là mồ côi và được thu hồi.
+- Chi tiết đầy đủ tại `docs/10` mục 8.2.1.
+
+### 12.7 Thời hạn giữ dữ liệu
+- Chunk và véc-tơ có `is_active = false`: xoá sau **7 ngày**.
+- Tệp video thô trên R2: xoá sau **30 ngày** kể từ khi `transcode` hoàn tất (giữ lại luồng HLS).
+
+### 12.8 Phạm vi và ngoại lệ
+- Phân quyền: theo **Phụ lục E** của `docs/08` (Auth · Vai trò · Ghi danh · Sở hữu). Bỏ qua kiểm tra ghi danh hoặc sở hữu là lỗi bảo mật.
+- Thông báo **chỉ trong ứng dụng**; không có push notification và không lưu device token.
+- Mô-đun `analytics` được phép truy vấn đọc trực tiếp các bảng phục vụ thống kê; các mô-đun khác không được truy cập bảng của nhau.
