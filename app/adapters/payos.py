@@ -1,0 +1,1 @@
+"""PayOS payment adapter boundary."""

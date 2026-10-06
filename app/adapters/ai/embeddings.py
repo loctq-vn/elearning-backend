@@ -1,0 +1,1 @@
+"""Embedding provider adapter boundary."""

@@ -1,0 +1,1 @@
+"""Courses data access."""

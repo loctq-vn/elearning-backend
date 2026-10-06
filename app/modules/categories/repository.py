@@ -1,0 +1,1 @@
+"""Categories data access."""
