@@ -1,44 +1,26 @@
-# Phụ thuộc Backend — E-Learning AI Platform
-# Nguyên tắc: cloud-only (Supabase PostgreSQL + pgvector, Cloudflare R2); không có thành phần cục bộ.
-
-# --- Web framework & cấu hình ---
+# Runtime dependencies (see pyproject.toml for the canonical project metadata)
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 pydantic[email]>=2.7,<3.0
 pydantic-settings>=2.3,<3.0
-
-# --- Cơ sở dữ liệu & di trú ---
 sqlalchemy[asyncio]>=2.0.30,<2.1
 asyncpg>=0.29,<1.0
 psycopg2-binary>=2.9,<3.0
 alembic>=1.13,<2.0
 pgvector>=0.2.5,<1.0
-
-# --- Bảo mật & xác thực ---
 python-jose[cryptography]>=3.3,<4.0
 passlib[bcrypt]>=1.7.4,<2.0
 bcrypt>=4.0,<4.1
 python-multipart>=0.0.9,<1.0
-
-# --- HTTP client & tệp ---
 httpx>=0.27,<1.0
 aiofiles>=23.2,<25.0
-
-# --- Lưu trữ đối tượng & thanh toán ---
 boto3>=1.34,<2.0
 payos>=1.0,<2.0
-
-# --- Whisper cục bộ & đếm token ---
 faster-whisper>=1.0,<2.0
 tiktoken>=0.7,<1.0
 
-# --- Chất lượng mã & kiểm thử ---
+# Development and test tools
 pytest>=8.0,<10.0
 pytest-asyncio>=0.23,<2.0
 ruff>=0.5,<1.0
 mypy>=1.10,<2.0
-
-# --- Tùy chọn ---
-# Mặc định Whisper chạy cục bộ bằng faster-whisper (đã bật ở nhóm phụ thuộc phía trên).
-# Bỏ comment nếu muốn chạy Whisper cục bộ:
-# faster-whisper đã được khai báo và bật ở nhóm phụ thuộc phía trên.
