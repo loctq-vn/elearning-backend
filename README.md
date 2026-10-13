@@ -34,6 +34,25 @@ Chạy smoke test:
 .\venv\Scripts\python.exe -m pytest
 ```
 
+Kiểm tra kết nối S3:
+
+```powershell
+# Không in hoặc commit access key/secret key.
+.\venv\Scripts\python.exe -m app.adapters.storage
+```
+
+Lệnh trên gọi `HeadBucket` bằng credentials trong `.env` và không yêu cầu
+bucket public. Bài kiểm tra tích hợp tương đương có thể chạy bằng:
+
+```powershell
+$env:RUN_S3_INTEGRATION = "1"
+.\venv\Scripts\python.exe -m pytest tests/test_storage.py -m integration -q
+```
+
+Chỉ chạy kiểm tra tích hợp sau khi đã cấu hình credentials mới trong môi trường
+local hoặc secret manager. Giữ `Block all public access` bật khi ứng dụng dùng
+IAM credentials/presigned URL.
+
 ## Database migration
 
 Alembic đọc URL từ `DATABASE_URL_SYNC` trong environment thông qua
@@ -43,6 +62,23 @@ Alembic đọc URL từ `DATABASE_URL_SYNC` trong environment thông qua
 .\venv\Scripts\alembic.exe upgrade head
 .\venv\Scripts\alembic.exe revision --autogenerate -m "describe change"
 ```
+
+## Baseline staging seed
+
+The baseline seed is intentionally limited to system settings, one verified
+admin account, categories, instructors, and draft/hidden course structure. It
+does not create media URLs, video records, transcripts, embeddings, payment
+records, or user activity data. Run it only after the database migration:
+
+```powershell
+$env:SEED_ADMIN_EMAIL = "admin@example.test"
+$env:SEED_ADMIN_PASSWORD = "use-a-staging-password"
+.\venv\Scripts\python.exe -m app.db.seed
+```
+
+`SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` are required and are never stored
+in the repository. The seed is idempotent and updates records identified by
+their stable email, slug, name, or title.
 
 Trong staging, đặt `APP_ENV=staging`, dùng RDS PostgreSQL/pgvector và cung cấp
 `DATABASE_URL`, `DATABASE_URL_SYNC` cùng các secret qua secret manager hoặc

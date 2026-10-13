@@ -128,7 +128,7 @@ Tham số bắt buộc:
 - Playlist chính `master.m3u8` khai báo cả 3 biến thể kèm `BANDWIDTH` và `RESOLUTION`.
 - Không tạo bản 360p ở giai đoạn hiện tại; có thể bổ sung sau bằng cách chạy lại bước `transcode`.
 
-Thư mục HLS trên S3 dùng tiền tố `hls/{video_id}/` và đường dẫn playlist chính được phân phối qua CloudFront theo dạng `{storage_public_base_url}/hls/{video_id}/master.m3u8`, trong đó `storage_public_base_url` trỏ tới domain CloudFront của môi trường.
+Thư mục HLS trên S3 dùng tiền tố `hls/{video_id}/` và đường dẫn playlist chính được phân phối qua CloudFront theo dạng `{storage_public_base_url}/hls/{video_id}/master.m3u8`, trong đó `storage_public_base_url` trỏ tới domain CloudFront của môi trường. Quy tắc này được tạo bởi `video_hls_prefix()` và `video_hls_master_key()` trong Storage Adapter; worker không tự nối chuỗi key.
 
 ### 4.2 Trích xuất âm thanh
 

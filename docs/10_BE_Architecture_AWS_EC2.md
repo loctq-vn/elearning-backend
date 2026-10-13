@@ -304,6 +304,19 @@ Nhiều worker có thể chạy song song (nhiều tiến trình, nhiều máy).
 
 PostgreSQL lưu toàn bộ dữ liệu quan hệ và véc-tơ trên Amazon RDS `[Confirmed — Chốt nội bộ]`. Object storage chính thức là Amazon S3 cho tệp thô, HLS, ảnh thu nhỏ và ảnh đại diện; Amazon CloudFront chịu trách nhiệm phân phối nội dung `[Confirmed — Chốt nội bộ]`. Không có object storage bền vững cục bộ trên EC2; mọi môi trường dev/test/prod dùng RDS và S3. Transcript, đoạn văn bản và véc-tơ lưu trong PostgreSQL để đảm bảo toàn vẹn và truy xuất trong cùng một giao dịch logic.
 
+Quy ước object key chuẩn được tập trung trong `app/adapters/storage.py` và áp dụng cho mọi môi trường:
+
+| Loại tài nguyên | Prefix/key chuẩn |
+|---|---|
+| Video thô | `videos/{video_id}/raw/{filename}` |
+| HLS playlist và segment | `hls/{video_id}/` |
+| HLS master playlist | `hls/{video_id}/master.m3u8` |
+| Thumbnail video | `thumbnails/videos/{video_id}/{filename}` |
+| Avatar người dùng | `avatars/{user_id}/{filename}` |
+| Health check tạm thời | `healthchecks/{uuid}.txt` |
+
+`filename` chỉ được dùng như thành phần cuối của key; Storage Adapter loại bỏ phần thư mục đầu vào và từ chối tên rỗng, `.`/`..` hoặc ký tự điều khiển. URL phân phối ưu tiên `CLOUDFRONT_DOMAIN`, sau đó dùng `S3_PUBLIC_BASE_URL`. Business logic không được tự nối các prefix này.
+
 Mọi thao tác với lưu trữ đối tượng đi qua một interface bộ điều hợp lưu trữ (Storage Adapter) duy nhất với các thao tác chuẩn gồm tải tệp lên, tải thư mục HLS lên, cấp đường dẫn truy cập có chữ ký và xóa tệp. Tầng dịch vụ và worker chỉ gọi interface này, không dùng SDK của nhà cung cấp trực tiếp và không giữ giao dịch cơ sở dữ liệu mở trong lúc chờ phản hồi mạng. Việc thay đổi nhà cung cấp lưu trữ về sau chỉ cần viết bộ điều hợp mới và đổi biến môi trường, không sửa logic nghiệp vụ.
 
 ### 8.4 Tích hợp AI và thanh toán
