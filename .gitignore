@@ -1,6 +1,7 @@
 # Môi trường & bí mật
 .env
 .env.*
+scripts/*.env
 !.env.example
 
 # Python
