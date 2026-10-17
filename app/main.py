@@ -1,8 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.adapters.storage import S3StorageAdapter, StorageConnectionError
 from app.core.config import settings
 from app.core.errors import (
     AppError,
@@ -11,6 +16,7 @@ from app.core.errors import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
+from app.db.session import get_db_session
 from app.modules.ai.router import router as ai_router
 from app.modules.analytics.router import router as analytics_router
 from app.modules.auth.router import router as auth_router
@@ -35,6 +41,14 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.add_exception_handler(AppError, app_error_handler)
@@ -138,5 +152,30 @@ async def api_root() -> dict[str, str]:
 
 
 @app.get("/health", tags=["system"])
-async def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+async def health_check(db: AsyncSession = Depends(get_db_session)) -> JSONResponse:
+    checks: dict[str, str] = {"api": "ok"}
+
+    # 1. Check RDS database connection
+    try:
+        await db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {exc}"
+
+    # 2. Check S3 storage connection
+    try:
+        storage = S3StorageAdapter(settings)
+        storage.check_connection()
+        checks["storage"] = "ok"
+    except StorageConnectionError as exc:
+        checks["storage"] = f"error: {exc}"
+    except Exception as exc:
+        checks["storage"] = f"error: {exc}"
+
+    overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    status_code = 200 if overall == "ok" else 503
+    return JSONResponse(
+        content={"status": overall, "checks": checks},
+        status_code=status_code,
+    )
+
