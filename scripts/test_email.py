@@ -1,8 +1,10 @@
-"""Diagnostic script to verify SMTP credentials and email delivery."""
-
 import argparse
 import asyncio
+from pathlib import Path
 import sys
+
+# Ensure project root is in sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.adapters.mailer import mailer
 from app.core.config import settings
