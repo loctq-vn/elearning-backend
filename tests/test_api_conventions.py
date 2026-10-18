@@ -5,7 +5,6 @@ from app.core.errors import AppError
 from app.core.schemas import ApiResponse, PaginationParams, build_paginated_response
 from app.main import app
 
-
 convention_router = APIRouter(prefix="/__test__")
 
 

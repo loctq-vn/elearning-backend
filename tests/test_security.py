@@ -1,14 +1,17 @@
-from uuid import uuid4
 from datetime import timedelta
+from uuid import uuid4
+
 import pytest
+
+from app.core.errors import AppError
 from app.core.security import (
-    get_password_hash,
-    verify_password,
     create_access_token,
     create_refresh_token,
     decode_token,
+    get_password_hash,
+    verify_password,
 )
-from app.core.errors import AppError
+
 
 def test_password_hashing():
     raw_pass = "SecurePass@123"

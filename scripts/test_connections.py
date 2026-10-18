@@ -1,8 +1,11 @@
 import asyncio
+
 from sqlalchemy import text
+
+from app.adapters.storage import S3StorageAdapter
 from app.core.config import settings
 from app.db.session import engine
-from app.adapters.storage import S3StorageAdapter
+
 
 async def main():
     print(f"=== Config loaded: app_name='{settings.app_name}', env='{settings.app_env}' ===")
@@ -33,8 +36,8 @@ async def main():
     print("Testing S3 storage connection...")
     try:
         storage = S3StorageAdapter(settings)
-        key = storage.check_connection()
-        print(f">>> S3 Storage OK: check object verified")
+        storage.check_connection()
+        print(">>> S3 Storage OK: check object verified")
     except Exception as e:
         print(f">>> S3 ERROR: {e}")
 

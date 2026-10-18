@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -68,7 +67,7 @@ def _http_error_code(status_code: int) -> str:
         status.HTTP_403_FORBIDDEN: "FORBIDDEN",
         status.HTTP_404_NOT_FOUND: "NOT_FOUND",
         status.HTTP_409_CONFLICT: "CONFLICT",
-        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: "PAYLOAD_TOO_LARGE",
+        getattr(status, "HTTP_413_CONTENT_TOO_LARGE", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE): "PAYLOAD_TOO_LARGE",
         status.HTTP_429_TOO_MANY_REQUESTS: "RATE_LIMITED",
     }.get(status_code, "INTERNAL_ERROR" if status_code >= 500 else "VALIDATION_ERROR")
 

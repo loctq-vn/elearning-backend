@@ -43,6 +43,9 @@ include = ["app*"]
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+ignore = ["B008", "BLE001"]
+
 [tool.pytest.ini_options]
 markers = [
     "integration: tests that connect to external services",

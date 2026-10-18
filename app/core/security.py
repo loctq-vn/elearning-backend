@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -50,6 +51,7 @@ def create_access_token(
         "sub": str(subject),
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
+        "jti": secrets.token_hex(16),
         "type": "access",
     }
     if extra_claims:
@@ -69,7 +71,28 @@ def create_refresh_token(
         "sub": str(subject),
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
+        "jti": secrets.token_hex(16),
         "type": "refresh",
+    }
+    if extra_claims:
+        payload.update(extra_claims)
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+def create_reset_token(
+    subject: str | UUID,
+    expires_delta: timedelta | None = None,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    """Create a short-lived token for password reset (default 15 minutes)."""
+    now = datetime.now(timezone.utc)
+    expire = now + (expires_delta or timedelta(minutes=15))
+    payload: dict[str, Any] = {
+        "sub": str(subject),
+        "iat": int(now.timestamp()),
+        "exp": int(expire.timestamp()),
+        "jti": secrets.token_hex(16),
+        "type": "password_reset",
     }
     if extra_claims:
         payload.update(extra_claims)
