@@ -74,7 +74,30 @@ class S3StorageAdapter:
             raise StorageConnectionError(
                 "CLOUDFRONT_DOMAIN or S3_PUBLIC_BASE_URL must be configured"
             )
+        if not base_url.startswith(("http://", "https://")):
+            base_url = f"https://{base_url}"
         return f"{base_url.rstrip('/')}/{key.lstrip('/')}"
+
+    def upload_file(self, file_bytes: bytes, key: str, content_type: str) -> str:
+        """Upload raw bytes to S3 and return the public URL."""
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        try:
+            self._client().put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=file_bytes,
+                ContentType=content_type,
+            )
+            return self.public_url(key)
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(
+                f"Unable to upload file to S3 '{key}'{detail}"
+            ) from exc
 
     def _client(self) -> Any:
         client_options: dict[str, str] = {"region_name": self.config.aws_region}

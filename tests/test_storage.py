@@ -123,11 +123,36 @@ def test_public_url_prefers_cloudfront_domain() -> None:
     )
 
 
-def test_public_url_requires_a_configured_base_url() -> None:
-    settings = make_settings(s3_public_base_url="", cloudfront_domain="")
+def test_public_url_normalizes_scheme_when_missing() -> None:
+    settings = make_settings(
+        s3_public_base_url="",
+        cloudfront_domain="d123456abcdef8.cloudfront.net",
+    )
+    assert S3StorageAdapter(settings).public_url("avatars/user-123/avatar.png") == (
+        "https://d123456abcdef8.cloudfront.net/avatars/user-123/avatar.png"
+    )
 
-    with pytest.raises(StorageConnectionError, match="CLOUDFRONT_DOMAIN"):
-        S3StorageAdapter(settings).public_url("avatars/user-123/avatar.png")
+
+@patch("app.adapters.storage.boto3.client")
+def test_upload_file_puts_object_and_returns_public_url(mock_client: Mock) -> None:
+    client = mock_client.return_value
+    settings = make_settings(
+        cloudfront_domain="https://cdn.example.com",
+    )
+    adapter = S3StorageAdapter(settings)
+    file_bytes = b"sample-bytes"
+    key = "avatars/user-123/avatar.png"
+    content_type = "image/png"
+
+    url = adapter.upload_file(file_bytes=file_bytes, key=key, content_type=content_type)
+
+    assert url == "https://cdn.example.com/avatars/user-123/avatar.png"
+    client.put_object.assert_called_once_with(
+        Bucket="elearning-media",
+        Key=key,
+        Body=file_bytes,
+        ContentType=content_type,
+    )
 
 
 @pytest.mark.integration
