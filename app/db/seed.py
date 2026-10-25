@@ -78,6 +78,30 @@ COURSE_SEEDS: Sequence[tuple[str, str, CourseStatus, int, str, str]] = (
         "co-so-du-lieu",
         "Trần Thu Hà",
     ),
+    (
+        "FastAPI & SQLAlchemy Thực Chiến",
+        "Xây dựng hệ thống backend hiệu năng cao với FastAPI, Async SQLAlchemy và PostgreSQL.",
+        CourseStatus.PUBLISHED,
+        299000,
+        "lap-trinh",
+        "Nguyễn Minh An",
+    ),
+    (
+        "Thiết Kế Cơ Sở Dữ Liệu PostgreSQL Nâng Cao",
+        "Tối ưu hóa truy vấn, phân vùng bảng, đánh chỉ mục và lập mô hình quan hệ phức tạp.",
+        CourseStatus.PUBLISHED,
+        399000,
+        "co-so-du-lieu",
+        "Trần Thu Hà",
+    ),
+    (
+        "Nhập Môn Học Máy & AI Ứng Dụng",
+        "Nền tảng trí tuệ nhân tạo, xử lý ngôn ngữ tự nhiên và xây dựng ứng dụng với LLM.",
+        CourseStatus.PUBLISHED,
+        499000,
+        "tri-tue-nhan-tao",
+        "Nguyễn Minh An",
+    ),
 )
 
 
@@ -216,8 +240,8 @@ async def _upsert_course_content(
                     lesson.course_id = course.id
                     lesson.title = lesson_title
                     lesson.description = None
-                    lesson.duration_seconds = None
-                    lesson.is_trial_allowed = False
+                    lesson.duration_seconds = 600.0 + lesson_index * 300.0
+                    lesson.is_trial_allowed = (lesson_index == 0)
 
 
 async def seed() -> None:

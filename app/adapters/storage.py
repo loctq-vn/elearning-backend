@@ -53,6 +53,16 @@ def video_thumbnail_key(video_id: str, filename: str) -> str:
     return f"thumbnails/videos/{video_id}/{_safe_filename(filename)}"
 
 
+def course_thumbnail_key(course_id: str, filename: str) -> str:
+    """Build the key for a course's cover thumbnail."""
+    return f"thumbnails/courses/{course_id}/{_safe_filename(filename)}"
+
+
+def instructor_avatar_key(instructor_id: str, filename: str) -> str:
+    """Build the key for an instructor's avatar (distinct from user avatars)."""
+    return f"avatars/instructors/{instructor_id}/{_safe_filename(filename)}"
+
+
 def user_avatar_key(user_id: str, filename: str) -> str:
     """Build the key for a user's avatar."""
     return f"avatars/{user_id}/{_safe_filename(filename)}"

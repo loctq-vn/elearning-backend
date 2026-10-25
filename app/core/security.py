@@ -178,3 +178,24 @@ async def get_current_active_user(
             message="Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.",
         )
     return current_user
+
+
+async def get_optional_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db_session),
+) -> User | None:
+    """Extract user if Authorization header is present and valid, otherwise return None."""
+    if not credentials:
+        return None
+    try:
+        payload = decode_token(credentials.credentials, expected_type="access")
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user_uuid = UUID(user_id_str)
+        result = await db.execute(
+            select(User).where(User.id == user_uuid, User.deleted_at.is_(None))
+        )
+        return result.scalar_one_or_none()
+    except Exception:
+        return None
