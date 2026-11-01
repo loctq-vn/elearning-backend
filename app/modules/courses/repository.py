@@ -172,6 +172,58 @@ class CourseRepository:
         stmt = select(func.count(Enrollment.id)).where(Enrollment.course_id == course_id)
         return (await self.db.execute(stmt)).scalar() or 0
 
+    async def get_first_lesson_id(self, course_id: UUID) -> UUID | None:
+        """Find the ID of the first lesson in the first chapter of a course."""
+        stmt = (
+            select(Lesson.id)
+            .join(Chapter, Chapter.id == Lesson.chapter_id)
+            .where(Lesson.course_id == course_id)
+            .order_by(Chapter.order_index.asc(), Lesson.order_index.asc())
+            .limit(1)
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def create_enrollment(
+        self,
+        *,
+        user_id: UUID,
+        course_id: UUID,
+        source: str = "free",
+        first_lesson_id: UUID | None = None,
+    ) -> Enrollment:
+        """Create an enrollment record."""
+        enrollment = Enrollment(
+            user_id=user_id,
+            course_id=course_id,
+            source=source,
+            progress_percent=0.0,
+            last_lesson_id=first_lesson_id,
+        )
+        self.db.add(enrollment)
+        await self.db.flush()
+        return enrollment
+
+    async def list_my_courses(
+        self, user_id: UUID, status: str | None = None
+    ) -> list[tuple[Enrollment, Course]]:
+        """List courses the user is enrolled in, optionally filtered by status."""
+        query = (
+            select(Enrollment, Course)
+            .join(Course, Course.id == Enrollment.course_id)
+            .where(
+                Enrollment.user_id == user_id,
+                Course.deleted_at.is_(None),
+            )
+        )
+        if status == "completed":
+            query = query.where(Enrollment.progress_percent >= 100.0)
+        elif status == "in_progress":
+            query = query.where(Enrollment.progress_percent < 100.0)
+
+        query = query.order_by(Enrollment.enrolled_at.desc())
+        rows = (await self.db.execute(query)).all()
+        return [(r[0], r[1]) for r in rows]
+
     async def get_course_structure(
         self, course_id: UUID, user_id: UUID | None = None
     ) -> list[tuple[Chapter, list[tuple[Lesson, bool, bool, bool]]]]:

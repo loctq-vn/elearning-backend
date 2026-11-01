@@ -8,10 +8,10 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.storage import S3StorageAdapter, video_raw_key
+from app.adapters.storage import S3StorageAdapter, video_hls_master_key, video_raw_key
 from app.core.config import settings
 from app.core.errors import AppError
-from app.db.models.schema import Course, VideoOverallStatus
+from app.db.models.schema import Course, User, UserRole, VideoOverallStatus
 from app.modules.lessons.repository import LessonRepository
 from app.modules.lessons.schemas import (
     ChapterCreate,
@@ -22,7 +22,11 @@ from app.modules.lessons.schemas import (
     LessonCreateResponse,
     LessonDeleteResponse,
     LessonDetailOut,
+    LessonPlayerOut,
+    QuizMarkerOut,
     ReorderResponse,
+    TranscriptSegmentOut,
+    VideoChapterOut,
 )
 
 ALLOWED_VIDEO_TYPES = {
@@ -342,4 +346,85 @@ class LessonService:
         return LessonDeleteResponse(
             message="Đã xóa bài học thành công.",
             lesson_id=lesson_id,
+        )
+
+    # ── Player (§2.7) ─────────────────────────────────────────────────────────
+
+    async def get_player_data(
+        self, lesson_id: UUID, current_user: User
+    ) -> LessonPlayerOut:
+        """Fetch lesson player data with access control and video status check (§2.7)."""
+        lesson = await self.repo.get_lesson(lesson_id)
+        if not lesson:
+            raise AppError(
+                status_code=404,
+                code="LESSON_NOT_FOUND",
+                message="Video không tồn tại.",
+            )
+
+        # Access control: Admin, trial lesson, or enrolled student
+        is_admin = current_user.role == UserRole.ADMIN
+        is_trial = lesson.is_trial_allowed
+        is_enrolled = await self.repo.is_user_enrolled(lesson.course_id, current_user.id)
+
+        if not (is_admin or is_trial or is_enrolled):
+            raise AppError(
+                status_code=403,
+                code="NOT_ENROLLED",
+                message="Vui lòng mua khóa học để truy cập.",
+            )
+
+        # Video readiness check
+        video = await self.repo.get_lesson_video(lesson.id)
+        if not video or video.overall_status != VideoOverallStatus.COMPLETED:
+            raise AppError(
+                status_code=503,
+                code="VIDEO_NOT_READY",
+                message="Video chưa sẵn sàng.",
+            )
+
+        # Build HLS Stream URL
+        if video.hls_master_url:
+            hls_stream_url = video.hls_master_url
+        else:
+            hls_stream_url = self.storage.public_url(video_hls_master_key(str(video.id)))
+
+        duration = int(video.duration_seconds or lesson.duration_seconds or 0)
+        last_position = await self.repo.get_user_watch_position(lesson.id, current_user.id)
+
+        # Subtitle / Transcripts
+        segments = await self.repo.get_lesson_transcript_segments(lesson.id)
+        transcript = [
+            TranscriptSegmentOut(start=s.start_time, end=s.end_time, text=s.text)
+            for s in segments
+        ]
+
+        # Quiz markers
+        quiz_markers_data = await self.repo.get_lesson_quiz_markers(lesson.id, current_user.id)
+        quiz_markers = [
+            QuizMarkerOut(
+                quiz_id=exam.id,
+                timestamp=exam.trigger_timestamp or 0.0,
+                is_answered=is_answered,
+            )
+            for exam, is_answered in quiz_markers_data
+        ]
+
+        # Navigation: prev / next lessons
+        prev_id, next_id = await self.repo.get_prev_and_next_lessons(lesson)
+
+        return LessonPlayerOut(
+            id=lesson.id,
+            title=lesson.title,
+            description=lesson.description,
+            course_id=lesson.course_id,
+            chapter_id=lesson.chapter_id,
+            hls_stream_url=hls_stream_url,
+            duration=duration,
+            last_position=last_position,
+            transcript=transcript,
+            chapters=[],
+            quiz_markers=quiz_markers,
+            next_lesson_id=next_id,
+            prev_lesson_id=prev_id,
         )

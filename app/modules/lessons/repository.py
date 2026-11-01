@@ -8,7 +8,20 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.schema import Chapter, Course, Lesson, Video, VideoOverallStatus
+from app.db.models.schema import (
+    Chapter,
+    Course,
+    Enrollment,
+    Exam,
+    ExamType,
+    ExerciseAttempt,
+    Lesson,
+    LessonProgress,
+    Transcript,
+    TranscriptSegment,
+    Video,
+    VideoOverallStatus,
+)
 
 
 class LessonRepository:
@@ -203,3 +216,87 @@ class LessonRepository:
         """Delete lesson record."""
         await self.db.delete(lesson)
         await self.db.flush()
+
+    # ── Player Operations (§2.7) ─────────────────────────────────────────────
+
+    async def get_lesson_video(self, lesson_id: UUID) -> Video | None:
+        """Fetch video record associated with a lesson."""
+        stmt = select(Video).where(Video.lesson_id == lesson_id)
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def get_lesson_transcript_segments(self, lesson_id: UUID) -> list[TranscriptSegment]:
+        """Fetch all transcript segments for a lesson ordered by start time."""
+        stmt = (
+            select(TranscriptSegment)
+            .join(Transcript, Transcript.id == TranscriptSegment.transcript_id)
+            .where(Transcript.lesson_id == lesson_id)
+            .order_by(TranscriptSegment.start_time.asc())
+        )
+        return list((await self.db.execute(stmt)).scalars().all())
+
+    async def get_lesson_quiz_markers(
+        self, lesson_id: UUID, user_id: UUID | None = None
+    ) -> list[tuple[Exam, bool]]:
+        """Fetch in-video quiz markers and indicate if the user already answered."""
+        stmt = (
+            select(Exam)
+            .where(
+                Exam.lesson_id == lesson_id,
+                Exam.exam_type == ExamType.IN_VIDEO_QUIZ,
+            )
+            .order_by(Exam.trigger_timestamp.asc())
+        )
+        exams = list((await self.db.execute(stmt)).scalars().all())
+        if not exams or not user_id:
+            return [(e, False) for e in exams]
+
+        exam_ids = [e.id for e in exams]
+        attempt_stmt = (
+            select(ExerciseAttempt.exam_id)
+            .where(
+                ExerciseAttempt.student_id == user_id,
+                ExerciseAttempt.exam_id.in_(exam_ids),
+            )
+        )
+        answered_ids = set((await self.db.execute(attempt_stmt)).scalars().all())
+        return [(e, e.id in answered_ids) for e in exams]
+
+    async def get_user_watch_position(
+        self, lesson_id: UUID, user_id: UUID | None = None
+    ) -> float:
+        """Fetch the latest watch position in seconds for the user on this lesson."""
+        if not user_id:
+            return 0.0
+        stmt = select(LessonProgress.watch_position_seconds).where(
+            LessonProgress.user_id == user_id,
+            LessonProgress.lesson_id == lesson_id,
+        )
+        return (await self.db.execute(stmt)).scalar() or 0.0
+
+    async def is_user_enrolled(self, course_id: UUID, user_id: UUID | None = None) -> bool:
+        """Check if user has an enrollment for the course."""
+        if not user_id:
+            return False
+        stmt = select(Enrollment.id).where(
+            Enrollment.course_id == course_id,
+            Enrollment.user_id == user_id,
+        )
+        return (await self.db.execute(stmt)).scalar() is not None
+
+    async def get_prev_and_next_lessons(
+        self, lesson: Lesson
+    ) -> tuple[UUID | None, UUID | None]:
+        """Fetch previous and next lesson IDs in course curriculum order."""
+        stmt = (
+            select(Lesson.id)
+            .join(Chapter, Chapter.id == Lesson.chapter_id)
+            .where(Lesson.course_id == lesson.course_id)
+            .order_by(Chapter.order_index.asc(), Lesson.order_index.asc())
+        )
+        all_lesson_ids = list((await self.db.execute(stmt)).scalars().all())
+        if lesson.id not in all_lesson_ids:
+            return None, None
+        idx = all_lesson_ids.index(lesson.id)
+        prev_id = all_lesson_ids[idx - 1] if idx > 0 else None
+        next_id = all_lesson_ids[idx + 1] if idx < len(all_lesson_ids) - 1 else None
+        return prev_id, next_id

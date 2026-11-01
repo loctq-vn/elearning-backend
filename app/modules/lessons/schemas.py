@@ -108,3 +108,55 @@ class LessonDeleteResponse(BaseModel):
 
     message: str
     lesson_id: UUID
+
+
+# ── Lesson Player Schemas (§2.7) ──────────────────────────────────────────────
+
+
+class TranscriptSegmentOut(BaseModel):
+    """Transcript segment for player subtitle."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    start: float
+    end: float
+    text: str
+
+
+class VideoChapterOut(BaseModel):
+    """Timestamp chapter marker within a video."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    title: str
+    start_time: float
+
+
+class QuizMarkerOut(BaseModel):
+    """In-video quiz marker."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    quiz_id: UUID
+    timestamp: float
+    is_answered: bool = False
+
+
+class LessonPlayerOut(BaseModel):
+    """Full player data for GET /api/lessons/{lesson_id} (§2.7)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    title: str
+    description: str | None = None
+    course_id: UUID
+    chapter_id: UUID
+    hls_stream_url: str
+    duration: int = 0
+    last_position: float = 0.0
+    transcript: list[TranscriptSegmentOut] = Field(default_factory=list)
+    chapters: list[VideoChapterOut] = Field(default_factory=list)
+    quiz_markers: list[QuizMarkerOut] = Field(default_factory=list)
+    next_lesson_id: UUID | None = None
+    prev_lesson_id: UUID | None = None

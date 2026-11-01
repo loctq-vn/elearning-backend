@@ -151,3 +151,39 @@ class CourseDeleteResponse(BaseModel):
 
     message: str
     course_id: UUID
+
+
+# ── Enrollment & My Courses (§2.6, §2.8) ──────────────────────────────────────
+
+
+class EnrollmentResponse(BaseModel):
+    """Response for POST /api/courses/{course_id}/enroll (§2.6)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    enrollment_id: UUID
+    course_id: UUID
+    first_lesson_id: UUID | None = None
+    enrolled_at: datetime
+
+
+class MyCourseItem(BaseModel):
+    """Item for GET /api/my-courses (§2.8)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    course_id: UUID
+    title: str
+    thumbnail_url: str | None = None
+    progress_percent: float = 0.0
+    next_lesson_id: UUID | None = None
+    next_lesson_title: str | None = None
+    last_position: float = 0.0
+    enrolled_at: datetime
+    completed_at: datetime | None = None
+
+
+class MyCourseListResponse(BaseModel):
+    """Response for GET /api/my-courses (§2.8)."""
+
+    data: list[MyCourseItem]

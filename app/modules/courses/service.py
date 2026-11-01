@@ -6,12 +6,13 @@ from math import ceil
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.storage import S3StorageAdapter, course_thumbnail_key
 from app.core.config import settings
 from app.core.errors import AppError
-from app.db.models.schema import CourseStatus, User, UserRole
+from app.db.models.schema import CourseStatus, Lesson, LessonProgress, User, UserRole
 from app.modules.courses.repository import CourseRepository
 from app.modules.courses.schemas import (
     CategorySimple,
@@ -21,9 +22,12 @@ from app.modules.courses.schemas import (
     CourseDetail,
     CourseListItem,
     CourseListResponse,
+    EnrollmentResponse,
     FeaturedCourse,
     InstructorProfileOut,
     LessonSummaryOut,
+    MyCourseItem,
+    MyCourseListResponse,
 )
 
 ALLOWED_THUMBNAIL_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -229,6 +233,119 @@ class CourseService:
             created_at=course.created_at,
             updated_at=course.updated_at,
         )
+
+    # ── Enrollment & Library (§2.6, §2.8) ─────────────────────────────────────
+
+    async def enroll_free(self, course_id: UUID, user_id: UUID) -> EnrollmentResponse:
+        """Enroll student in a free course (§2.6)."""
+        course = await self.repo.get_by_id(course_id)
+        if not course or course.deleted_at is not None:
+            raise AppError(status_code=404, code="NOT_FOUND", message="Khóa học không tồn tại.")
+
+        if course.status != CourseStatus.PUBLISHED:
+            raise AppError(status_code=404, code="NOT_FOUND", message="Khóa học chưa được xuất bản.")
+
+        if course.price > 0:
+            raise AppError(
+                status_code=400,
+                code="COURSE_NOT_FREE",
+                message="Khóa học có phí, không thể enroll trực tiếp.",
+            )
+
+        existing = await self.repo.get_enrollment(user_id=user_id, course_id=course_id)
+        if existing:
+            raise AppError(
+                status_code=409,
+                code="ALREADY_ENROLLED",
+                message="Đã đăng ký rồi.",
+            )
+
+        first_lesson_id = await self.repo.get_first_lesson_id(course_id)
+        enrollment = await self.repo.create_enrollment(
+            user_id=user_id,
+            course_id=course_id,
+            source="free",
+            first_lesson_id=first_lesson_id,
+        )
+        await self.db.commit()
+
+        return EnrollmentResponse(
+            enrollment_id=enrollment.id,
+            course_id=course.id,
+            first_lesson_id=first_lesson_id,
+            enrolled_at=enrollment.enrolled_at,
+        )
+
+    async def get_my_courses(
+        self, user_id: UUID, status: str | None = None
+    ) -> MyCourseListResponse:
+        """Fetch all courses enrolled by the student (§2.8)."""
+        enrollments = await self.repo.list_my_courses(user_id=user_id, status=status)
+        result: list[MyCourseItem] = []
+
+        for enrollment, course in enrollments:
+            chapters_data = await self.repo.get_course_structure(course.id, user_id=user_id)
+            all_lessons: list[tuple[Lesson, bool]] = []
+            for _chapter, lessons in chapters_data:
+                for lesson, is_completed, _has_quiz, _has_exercise in lessons:
+                    all_lessons.append((lesson, is_completed))
+
+            next_lesson_id: UUID | None = None
+            next_lesson_title: str | None = None
+            last_position: float = 0.0
+
+            if all_lessons:
+                target_lesson: Lesson | None = None
+                if enrollment.last_lesson_id:
+                    for l, is_comp in all_lessons:
+                        if l.id == enrollment.last_lesson_id:
+                            if not is_comp:
+                                target_lesson = l
+                            break
+
+                if not target_lesson:
+                    for l, is_comp in all_lessons:
+                        if not is_comp:
+                            target_lesson = l
+                            break
+
+                if target_lesson:
+                    next_lesson_id = target_lesson.id
+                    next_lesson_title = target_lesson.title
+                    pos_stmt = select(LessonProgress.watch_position_seconds).where(
+                        LessonProgress.user_id == user_id,
+                        LessonProgress.lesson_id == target_lesson.id,
+                    )
+                    last_position = (await self.db.execute(pos_stmt)).scalar() or 0.0
+
+            completed_at = None
+            if enrollment.progress_percent >= 100.0:
+                comp_stmt = (
+                    select(func.max(LessonProgress.completed_at))
+                    .join(Lesson, Lesson.id == LessonProgress.lesson_id)
+                    .where(
+                        Lesson.course_id == course.id,
+                        LessonProgress.user_id == user_id,
+                        LessonProgress.is_completed.is_(True),
+                    )
+                )
+                completed_at = (await self.db.execute(comp_stmt)).scalar()
+
+            result.append(
+                MyCourseItem(
+                    course_id=course.id,
+                    title=course.title,
+                    thumbnail_url=course.thumbnail_url,
+                    progress_percent=enrollment.progress_percent,
+                    next_lesson_id=next_lesson_id,
+                    next_lesson_title=next_lesson_title,
+                    last_position=last_position,
+                    enrolled_at=enrollment.enrolled_at,
+                    completed_at=completed_at,
+                )
+            )
+
+        return MyCourseListResponse(data=result)
 
     # ── Admin ─────────────────────────────────────────────────────────────────
 

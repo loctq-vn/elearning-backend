@@ -16,7 +16,9 @@ from app.modules.courses.schemas import (
     CourseDeleteResponse,
     CourseDetail,
     CourseListResponse,
+    EnrollmentResponse,
     FeaturedCourse,
+    MyCourseListResponse,
 )
 from app.modules.courses.service import CourseService
 
@@ -94,6 +96,35 @@ async def get_course_detail(
 ) -> CourseDetail:
     """Trả thông tin chi tiết khóa học, giảng viên, cấu trúc chương/bài và trạng thái khóa bài học."""
     return await CourseService(db).get_detail(course_id, current_user=current_user)
+
+
+@router.post(
+    "/courses/{course_id}/enroll",
+    response_model=EnrollmentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Đăng ký khóa học miễn phí (§2.6)",
+)
+async def enroll_free_course(
+    course_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> EnrollmentResponse:
+    """Học viên đăng ký khóa học miễn phí (price = 0)."""
+    return await CourseService(db).enroll_free(course_id=course_id, user_id=current_user.id)
+
+
+@router.get(
+    "/my-courses",
+    response_model=MyCourseListResponse,
+    summary="Lấy danh sách khóa học của tôi / Thư viện (§2.8)",
+)
+async def get_my_courses(
+    status: str | None = Query(None, pattern="^(in_progress|completed)$", description="Lọc theo trạng thái"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> MyCourseListResponse:
+    """Xem danh sách các khóa học mà học viên đã đăng ký hoặc mua."""
+    return await CourseService(db).get_my_courses(user_id=current_user.id, status=status)
 
 
 # ── Admin Endpoints ───────────────────────────────────────────────────────────

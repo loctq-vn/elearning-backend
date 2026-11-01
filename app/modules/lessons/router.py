@@ -20,6 +20,7 @@ from app.modules.lessons.schemas import (
     LessonCreateResponse,
     LessonDeleteResponse,
     LessonDetailOut,
+    LessonPlayerOut,
     ReorderResponse,
 )
 from app.modules.lessons.service import LessonService
@@ -168,3 +169,20 @@ async def delete_lesson(
 ) -> LessonDeleteResponse:
     _require_admin(current_user)
     return await LessonService(db).delete_lesson(lesson_id)
+
+
+# ── Student Player Endpoint (§2.7) ────────────────────────────────────────────
+
+
+@router.get(
+    "/lessons/{lesson_id}",
+    response_model=LessonPlayerOut,
+    summary="Lấy chi tiết bài giảng cho Player (§2.7)",
+)
+async def get_lesson_player_data(
+    lesson_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> LessonPlayerOut:
+    """Tải dữ liệu trình phát video kèm kiểm tra phân quyền truy cập và bài học thử."""
+    return await LessonService(db).get_player_data(lesson_id=lesson_id, current_user=current_user)
