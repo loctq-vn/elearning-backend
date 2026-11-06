@@ -629,6 +629,8 @@ Bảng mã lỗi chuẩn toàn hệ thống (các mục sau chỉ tham chiếu, 
 | `title` | `string` | Tên khóa |
 | `thumbnail_url` | `string` | Ảnh bìa |
 | `progress_percent` | `float` | % hoàn thành |
+| `total_lessons` | `int` | Tổng số bài học trong khóa |
+| `completed_lessons` | `int` | Số bài học học viên đã hoàn thành |
 | `next_lesson_id` | `string? (UUID)` | Bài tiếp (nullable nếu hoàn thành) |
 | `next_lesson_title` | `string?` | Tên bài tiếp |
 | `last_position` | `float` | Vị trí dừng cuối (giây) |

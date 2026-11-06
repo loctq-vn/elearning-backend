@@ -192,6 +192,8 @@ async def test_get_my_courses_library() -> None:
         assert item["next_lesson_id"] == str(lesson.id)
         assert item["next_lesson_title"] == lesson.title
         assert item["progress_percent"] == 0.0
+        assert item["total_lessons"] == 1
+        assert item["completed_lessons"] == 0
 
         # Filter by in_progress status
         res_in_prog = await ac.get(

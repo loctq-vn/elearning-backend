@@ -331,12 +331,17 @@ class CourseService:
                 )
                 completed_at = (await self.db.execute(comp_stmt)).scalar()
 
+            total_lessons = len(all_lessons)
+            completed_lessons = sum(1 for _, is_comp in all_lessons if is_comp)
+
             result.append(
                 MyCourseItem(
                     course_id=course.id,
                     title=course.title,
                     thumbnail_url=course.thumbnail_url,
                     progress_percent=enrollment.progress_percent,
+                    total_lessons=total_lessons,
+                    completed_lessons=completed_lessons,
                     next_lesson_id=next_lesson_id,
                     next_lesson_title=next_lesson_title,
                     last_position=last_position,

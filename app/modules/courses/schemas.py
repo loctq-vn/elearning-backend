@@ -176,6 +176,8 @@ class MyCourseItem(BaseModel):
     title: str
     thumbnail_url: str | None = None
     progress_percent: float = 0.0
+    total_lessons: int = 0
+    completed_lessons: int = 0
     next_lesson_id: UUID | None = None
     next_lesson_title: str | None = None
     last_position: float = 0.0
