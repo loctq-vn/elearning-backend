@@ -7,7 +7,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ── Update Progress (§3.1) ────────────────────────────────────────────────────
 
 

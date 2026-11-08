@@ -257,6 +257,9 @@ async def seed() -> None:
 
 
 def main() -> None:
+    from dotenv import load_dotenv
+
+    load_dotenv()
     asyncio.run(seed())
 
 

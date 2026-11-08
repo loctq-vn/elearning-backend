@@ -78,8 +78,7 @@ class CourseService:
         current_user: User | None = None,
     ) -> CourseListResponse:
         """Fetch paginated course list with filters (§2.3)."""
-        if page < 1:
-            page = 1
+        page = max(page, 1)
         if page_size < 1 or page_size > 100:
             page_size = 12
 
@@ -170,7 +169,7 @@ class CourseService:
         for chap, lessons_info in chapters_data:
             lesson_outs: list[LessonSummaryOut] = []
             for lesson, is_completed, has_quiz, has_exercise in lessons_info:
-                duration_int = int(round(lesson.duration_seconds or 0))
+                duration_int = round(lesson.duration_seconds or 0)
                 total_duration += duration_int
                 total_lessons += 1
 

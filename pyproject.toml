@@ -44,7 +44,7 @@ include = ["app*"]
 line-length = 100
 
 [tool.ruff.lint]
-ignore = ["B008", "BLE001"]
+ignore = ["B008", "BLE001", "RUF059"]
 
 [tool.pytest.ini_options]
 markers = [

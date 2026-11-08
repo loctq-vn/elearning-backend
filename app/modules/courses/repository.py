@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, or_, select

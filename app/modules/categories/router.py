@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import AppError
 from app.core.security import get_current_user
 from app.db.models.schema import User, UserRole
 from app.db.session import get_db_session
@@ -18,7 +19,6 @@ from app.modules.categories.schemas import (
     CategoryUpdate,
 )
 from app.modules.categories.service import CategoryService
-from app.core.errors import AppError
 
 router = APIRouter(tags=["categories"])
 

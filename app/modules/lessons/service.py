@@ -26,7 +26,6 @@ from app.modules.lessons.schemas import (
     QuizMarkerOut,
     ReorderResponse,
     TranscriptSegmentOut,
-    VideoChapterOut,
 )
 
 ALLOWED_VIDEO_TYPES = {

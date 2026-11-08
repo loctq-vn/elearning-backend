@@ -5,12 +5,11 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.schema import (
     Chapter,
-    Course,
     Enrollment,
     Exam,
     ExamType,

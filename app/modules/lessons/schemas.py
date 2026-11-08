@@ -7,7 +7,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ── Chapter Schemas (§2.12) ───────────────────────────────────────────────────
 
 

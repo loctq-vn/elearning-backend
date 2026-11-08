@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from math import ceil
-from typing import Sequence
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import func, or_, select

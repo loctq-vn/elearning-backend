@@ -61,8 +61,7 @@ class InstructorService:
         search: str | None = None,
     ) -> AdminInstructorListResponse:
         """Fetch paginated instructors for admin portal (§2.14a)."""
-        if page < 1:
-            page = 1
+        page = max(page, 1)
         if page_size < 1 or page_size > 100:
             page_size = 10
 

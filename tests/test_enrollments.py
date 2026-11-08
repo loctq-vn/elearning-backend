@@ -13,8 +13,6 @@ from app.db.models.schema import (
     Chapter,
     Course,
     CourseStatus,
-    Enrollment,
-    Instructor,
     Lesson,
     User,
     UserRole,

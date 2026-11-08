@@ -115,7 +115,7 @@ async def test_chapter_crud_and_cascade_safeguard() -> None:
             )
             session.add(video)
             await session.commit()
-            lesson_id = lesson.id
+            _lesson_id = lesson.id
             video_id = video.id
 
         # 4. Attempt to delete chapter -> must be blocked by safeguard
