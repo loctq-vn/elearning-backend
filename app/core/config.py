@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     cloudfront_domain: str = ""
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
+    upload_max_total_bytes: int = 5 * 1024 * 1024 * 1024
+    upload_recommended_part_bytes: int = 52428800
+    upload_max_part_bytes: int = 200 * 1024 * 1024
+    upload_min_part_bytes: int = 5 * 1024 * 1024
+    upload_presigned_url_expire_seconds: int = 3600
+
     openai_api_key: str = ""
     gemini_api_key: str = ""
     ai_primary_model: str = "gpt-4o-mini"

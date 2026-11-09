@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 import boto3
+from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.config import Settings, settings
@@ -76,10 +77,7 @@ class S3StorageAdapter:
 
     def public_url(self, key: str) -> str:
         """Build the public/CDN URL for an object key."""
-        base_url = (
-            self.config.cloudfront_domain.strip()
-            or self.config.s3_public_base_url.strip()
-        )
+        base_url = self.config.cloudfront_domain.strip() or self.config.s3_public_base_url.strip()
         if not base_url:
             raise StorageConnectionError(
                 "CLOUDFRONT_DOMAIN or S3_PUBLIC_BASE_URL must be configured"
@@ -105,12 +103,151 @@ class S3StorageAdapter:
         except (BotoCoreError, ClientError) as exc:
             error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
             detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(f"Unable to upload file to S3 '{key}'{detail}") from exc
+
+    def create_multipart_upload(self, key: str, content_type: str) -> str:
+        """Initiate an S3 multipart upload and return the upload ID."""
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        try:
+            response = self._client().create_multipart_upload(
+                Bucket=bucket,
+                Key=key,
+                ContentType=content_type,
+            )
+            return str(response["UploadId"])
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
             raise StorageConnectionError(
-                f"Unable to upload file to S3 '{key}'{detail}"
+                f"Unable to create multipart upload for '{key}'{detail}"
+            ) from exc
+
+    def generate_presigned_part_url(
+        self,
+        key: str,
+        upload_id: str,
+        part_number: int,
+        expires_in: int = 3600,
+    ) -> str:
+        """Generate a presigned URL for uploading a specific part."""
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        try:
+            return str(
+                self._client().generate_presigned_url(
+                    ClientMethod="upload_part",
+                    Params={
+                        "Bucket": bucket,
+                        "Key": key,
+                        "UploadId": upload_id,
+                        "PartNumber": part_number,
+                    },
+                    ExpiresIn=expires_in,
+                )
+            )
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(
+                f"Unable to generate presigned part URL for '{key}' part {part_number}{detail}"
+            ) from exc
+
+    def complete_multipart_upload(
+        self,
+        key: str,
+        upload_id: str,
+        parts: list[dict[str, Any]],
+    ) -> str:
+        """Complete an S3 multipart upload and return the public URL."""
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        sorted_parts = sorted(parts, key=lambda p: int(p["PartNumber"]))
+        try:
+            self._client().complete_multipart_upload(
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": sorted_parts},
+            )
+            return self.public_url(key)
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(
+                f"Unable to complete multipart upload for '{key}'{detail}"
+            ) from exc
+
+    def abort_multipart_upload(self, key: str, upload_id: str) -> None:
+        """Abort an in-progress multipart upload and clean up stored parts."""
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        try:
+            self._client().abort_multipart_upload(
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+            )
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(
+                f"Unable to abort multipart upload for '{key}'{detail}"
+            ) from exc
+
+    def list_parts(self, key: str, upload_id: str) -> list[int]:
+        """List numbers of parts already uploaded for this multipart upload."""
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        try:
+            response = self._client().list_parts(
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+            )
+            return [int(part["PartNumber"]) for part in response.get("Parts", [])]
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(f"Unable to list parts for '{key}'{detail}") from exc
+
+    def find_active_multipart_upload(self, key_prefix: str) -> tuple[str, str] | None:
+        """Find an active in-progress multipart upload matching key_prefix (key, upload_id)."""
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        try:
+            response = self._client().list_multipart_uploads(
+                Bucket=bucket,
+                Prefix=key_prefix,
+            )
+            uploads = response.get("Uploads", [])
+            if uploads:
+                return str(uploads[0]["Key"]), str(uploads[0]["UploadId"])
+            return None
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(
+                f"Unable to check active multipart uploads for prefix '{key_prefix}'{detail}"
             ) from exc
 
     def _client(self) -> Any:
-        client_options: dict[str, str] = {"region_name": self.config.aws_region}
+        client_options: dict[str, Any] = {
+            "region_name": self.config.aws_region,
+            "config": Config(signature_version="s3v4"),
+        }
         if self.config.storage_endpoint_url:
             client_options["endpoint_url"] = self.config.storage_endpoint_url
         if self.config.storage_access_key and self.config.storage_secret_key:

@@ -1,5 +1,5 @@
 import os
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -38,6 +38,7 @@ def test_check_connection_uses_configured_bucket(mock_client: Mock) -> None:
     mock_client.assert_called_once_with(
         "s3",
         region_name="ap-southeast-1",
+        config=ANY,
         endpoint_url="https://s3.ap-southeast-1.amazonaws.com",
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",
@@ -152,6 +153,131 @@ def test_upload_file_puts_object_and_returns_public_url(mock_client: Mock) -> No
         Key=key,
         Body=file_bytes,
         ContentType=content_type,
+    )
+
+
+@patch("app.adapters.storage.boto3.client")
+def test_create_multipart_upload_returns_upload_id(mock_client: Mock) -> None:
+    client = mock_client.return_value
+    client.create_multipart_upload.return_value = {"UploadId": "upload-xyz-123"}
+    adapter = S3StorageAdapter(make_settings())
+
+    upload_id = adapter.create_multipart_upload("videos/vid-1/raw/test.mp4", "video/mp4")
+
+    assert upload_id == "upload-xyz-123"
+    client.create_multipart_upload.assert_called_once_with(
+        Bucket="elearning-media",
+        Key="videos/vid-1/raw/test.mp4",
+        ContentType="video/mp4",
+    )
+
+
+@patch("app.adapters.storage.boto3.client")
+def test_generate_presigned_part_url(mock_client: Mock) -> None:
+    client = mock_client.return_value
+    client.generate_presigned_url.return_value = "https://s3.example.com/presigned-part-1"
+    adapter = S3StorageAdapter(make_settings())
+
+    url = adapter.generate_presigned_part_url(
+        key="videos/vid-1/raw/test.mp4",
+        upload_id="upload-xyz-123",
+        part_number=1,
+        expires_in=1800,
+    )
+
+    assert url == "https://s3.example.com/presigned-part-1"
+    client.generate_presigned_url.assert_called_once_with(
+        ClientMethod="upload_part",
+        Params={
+            "Bucket": "elearning-media",
+            "Key": "videos/vid-1/raw/test.mp4",
+            "UploadId": "upload-xyz-123",
+            "PartNumber": 1,
+        },
+        ExpiresIn=1800,
+    )
+
+
+@patch("app.adapters.storage.boto3.client")
+def test_complete_multipart_upload_sorts_parts_and_returns_url(mock_client: Mock) -> None:
+    client = mock_client.return_value
+    adapter = S3StorageAdapter(make_settings(cloudfront_domain="https://cdn.example.com"))
+
+    parts = [
+        {"PartNumber": 2, "ETag": '"etag2"'},
+        {"PartNumber": 1, "ETag": '"etag1"'},
+    ]
+    url = adapter.complete_multipart_upload(
+        key="videos/vid-1/raw/test.mp4",
+        upload_id="upload-xyz-123",
+        parts=parts,
+    )
+
+    assert url == "https://cdn.example.com/videos/vid-1/raw/test.mp4"
+    client.complete_multipart_upload.assert_called_once_with(
+        Bucket="elearning-media",
+        Key="videos/vid-1/raw/test.mp4",
+        UploadId="upload-xyz-123",
+        MultipartUpload={
+            "Parts": [
+                {"PartNumber": 1, "ETag": '"etag1"'},
+                {"PartNumber": 2, "ETag": '"etag2"'},
+            ]
+        },
+    )
+
+
+@patch("app.adapters.storage.boto3.client")
+def test_abort_multipart_upload(mock_client: Mock) -> None:
+    client = mock_client.return_value
+    adapter = S3StorageAdapter(make_settings())
+
+    adapter.abort_multipart_upload(key="videos/vid-1/raw/test.mp4", upload_id="upload-xyz-123")
+
+    client.abort_multipart_upload.assert_called_once_with(
+        Bucket="elearning-media",
+        Key="videos/vid-1/raw/test.mp4",
+        UploadId="upload-xyz-123",
+    )
+
+
+@patch("app.adapters.storage.boto3.client")
+def test_list_parts_returns_uploaded_part_numbers(mock_client: Mock) -> None:
+    client = mock_client.return_value
+    client.list_parts.return_value = {
+        "Parts": [
+            {"PartNumber": 1, "Size": 52428800},
+            {"PartNumber": 2, "Size": 123456},
+        ]
+    }
+    adapter = S3StorageAdapter(make_settings())
+
+    part_numbers = adapter.list_parts(key="videos/vid-1/raw/test.mp4", upload_id="upload-xyz-123")
+
+    assert part_numbers == [1, 2]
+    client.list_parts.assert_called_once_with(
+        Bucket="elearning-media",
+        Key="videos/vid-1/raw/test.mp4",
+        UploadId="upload-xyz-123",
+    )
+
+
+@patch("app.adapters.storage.boto3.client")
+def test_find_active_multipart_upload(mock_client: Mock) -> None:
+    client = mock_client.return_value
+    client.list_multipart_uploads.return_value = {
+        "Uploads": [
+            {"Key": "videos/vid-1/raw/test.mp4", "UploadId": "upload-xyz-123"}
+        ]
+    }
+    adapter = S3StorageAdapter(make_settings())
+
+    active = adapter.find_active_multipart_upload("videos/vid-1/raw/")
+
+    assert active == ("videos/vid-1/raw/test.mp4", "upload-xyz-123")
+    client.list_multipart_uploads.assert_called_once_with(
+        Bucket="elearning-media",
+        Prefix="videos/vid-1/raw/",
     )
 
 
