@@ -83,6 +83,14 @@ class CancelPipelineResponse(BaseModel):
     overall_status: str = Field(..., description="Trạng thái tổng thể sau khi hủy")
 
 
+# ── 9.4 Pipeline Retry ────────────────────────────────────────────────────────
+
+
+class RetryPipelineResponse(BaseModel):
+    message: str = Field(..., description="Thông điệp kết quả retry")
+    video_id: UUID = Field(..., description="PK video")
+
+
 # ── 9.2 Pipeline Step & Status ────────────────────────────────────────────────
 
 

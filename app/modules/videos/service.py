@@ -16,10 +16,13 @@ from app.adapters.storage import (
 )
 from app.core.config import settings
 from app.core.errors import AppError
-from app.db.models.schema import VideoOverallStatus
+from app.core.schemas import PaginatedResponse, build_paginated_response
+from app.db.models.schema import PipelineStep, VideoOverallStatus
 from app.modules.videos.repository import VideoRepository
 from app.modules.videos.schemas import (
     CancelPipelineResponse,
+    RetryPipelineResponse,
+    VideoPipelineStatusResponse,
     VideoUploadCompleteRequest,
     VideoUploadCompleteResponse,
     VideoUploadInitRequest,
@@ -285,4 +288,88 @@ class VideoService:
         return CancelPipelineResponse(
             message="Đã hủy xử lý.",
             overall_status="uploaded",
+        )
+
+    async def get_pipeline_status(self, video_id: UUID) -> VideoPipelineStatusResponse:
+        """Fetch video pipeline processing status (Contract 08 §9.2)."""
+        status = await self.repo.get_pipeline_status(video_id)
+        if not status:
+            raise AppError(
+                status_code=404,
+                code="NOT_FOUND",
+                message="Không tìm thấy thông tin pipeline của video.",
+            )
+        return status
+
+    async def list_pipelines(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        status_filter: str | None = None,
+    ) -> PaginatedResponse[VideoPipelineStatusResponse]:
+        """Fetch paginated video pipeline records (Contract 08 §9.3)."""
+        status_enum = None
+        if status_filter:
+            try:
+                status_enum = VideoOverallStatus(status_filter.lower().strip())
+            except ValueError:
+                raise AppError(
+                    status_code=400,
+                    code="INVALID_STATUS",
+                    message=f"Trạng thái không hợp lệ: '{status_filter}'.",
+                )
+
+        items, total = await self.repo.list_pipeline_statuses(
+            page=page,
+            page_size=page_size,
+            status_filter=status_enum,
+        )
+        return build_paginated_response(
+            data=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    async def retry_pipeline(self, video_id: UUID, step_name: str) -> RetryPipelineResponse:
+        """Retry a specific pipeline step (Contract 08 §9.4)."""
+        normalized_step = step_name.lower().strip()
+        step_mapping = {
+            "upload": PipelineStep.UPLOAD,
+            "transcode": PipelineStep.TRANSCODE,
+            "transcribe": PipelineStep.TRANSCRIBE,
+            "stt": PipelineStep.TRANSCRIBE,  # Backward compatible per Contract 08 §9.4
+            "index": PipelineStep.INDEX,
+        }
+
+        step_enum = step_mapping.get(normalized_step)
+        if not step_enum:
+            raise AppError(
+                status_code=400,
+                code="INVALID_STEP",
+                message=f"Bước '{step_name}' không hợp lệ. Chỉ chấp nhận: upload, transcode, transcribe (hoặc stt), index.",
+            )
+
+        video = await self.repo.get_video_by_id(video_id)
+        if not video:
+            raise AppError(
+                status_code=404,
+                code="NOT_FOUND",
+                message="Không tìm thấy video.",
+            )
+
+        try:
+            await self.repo.retry_pipeline_step(video_id, step_enum)
+            await self.db.commit()
+        except ValueError as exc:
+            raise AppError(
+                status_code=400,
+                code="RETRY_ERROR",
+                message=str(exc),
+            ) from exc
+
+        return RetryPipelineResponse(
+            message=f"Đã bắt đầu xử lý lại bước {step_name}.",
+            video_id=video_id,
         )

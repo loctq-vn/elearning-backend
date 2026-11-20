@@ -243,6 +243,119 @@ class S3StorageAdapter:
                 f"Unable to check active multipart uploads for prefix '{key_prefix}'{detail}"
             ) from exc
 
+    def download_file(self, key: str, destination_path: str | Any) -> None:
+        """Download an S3 object directly to a local file path."""
+        from pathlib import Path
+
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        dest = Path(destination_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._client().download_file(bucket, key, str(dest))
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(f"Unable to download S3 object '{key}'{detail}") from exc
+
+    def upload_local_file(
+        self,
+        local_path: str | Any,
+        key: str,
+        content_type: str | None = None,
+    ) -> str:
+        """Upload a local file to S3 and return its public URL."""
+        import mimetypes
+        from pathlib import Path
+
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        path = Path(local_path)
+        if not path.is_file():
+            raise StorageConnectionError(f"Local file does not exist: '{local_path}'")
+
+        if content_type is None:
+            if path.suffix.lower() == ".m3u8":
+                content_type = "application/vnd.apple.mpegurl"
+            elif path.suffix.lower() == ".ts":
+                content_type = "video/mp2t"
+            else:
+                content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+        try:
+            self._client().upload_file(
+                str(path),
+                bucket,
+                key,
+                ExtraArgs={"ContentType": content_type},
+            )
+            return self.public_url(key)
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(
+                f"Unable to upload local file '{local_path}' to '{key}'{detail}"
+            ) from exc
+
+    def upload_directory(
+        self,
+        local_dir: str | Any,
+        s3_prefix: str,
+    ) -> list[str]:
+        """Upload all files from a local directory to an S3 prefix."""
+        from pathlib import Path
+
+        dir_path = Path(local_dir)
+        if not dir_path.is_dir():
+            raise StorageConnectionError(f"Local directory does not exist: '{local_dir}'")
+
+        uploaded_keys: list[str] = []
+        normalized_prefix = s3_prefix.strip().strip("/")
+
+        for file_path in dir_path.rglob("*"):
+            if not file_path.is_file():
+                continue
+            relative_path = file_path.relative_to(dir_path).as_posix()
+            s3_key = f"{normalized_prefix}/{relative_path}"
+            self.upload_local_file(file_path, s3_key)
+            uploaded_keys.append(s3_key)
+
+        return uploaded_keys
+
+    def delete_prefix(self, s3_prefix: str) -> int:
+        """Delete all objects matching s3_prefix. Returns count of deleted objects."""
+        bucket = self.config.s3_bucket_name.strip()
+        if not bucket:
+            raise StorageConnectionError("S3_BUCKET_NAME must not be empty")
+
+        normalized_prefix = s3_prefix.strip().strip("/")
+        client = self._client()
+        deleted_count = 0
+
+        try:
+            paginator = client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=bucket, Prefix=normalized_prefix):
+                contents = page.get("Contents", [])
+                if not contents:
+                    continue
+                delete_items = [{"Key": obj["Key"]} for obj in contents]
+                client.delete_objects(
+                    Bucket=bucket,
+                    Delete={"Objects": delete_items},
+                )
+                deleted_count += len(delete_items)
+            return deleted_count
+        except (BotoCoreError, ClientError) as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            detail = f" ({error_code})" if error_code else ""
+            raise StorageConnectionError(
+                f"Unable to delete objects for prefix '{s3_prefix}'{detail}"
+            ) from exc
+
     def _client(self) -> Any:
         client_options: dict[str, Any] = {
             "region_name": self.config.aws_region,

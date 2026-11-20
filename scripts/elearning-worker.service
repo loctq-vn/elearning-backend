@@ -1,0 +1,22 @@
+[Unit]
+Description=AI E-Learning Platform - Video Processing Worker (Phase C3)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/elearning-backend
+ExecStart=/home/ec2-user/elearning-backend/.venv/bin/python scripts/run_video_worker.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+EnvironmentFile=/home/ec2-user/elearning-backend/.env
+
+# Limits
+LimitNOFILE=65536
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

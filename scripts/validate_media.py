@@ -33,9 +33,7 @@ def get_ffprobe_metadata(file_path: Path) -> dict:
         "-show_streams",
         str(file_path),
     ]
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", check=False
-    )
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=False)
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed for {file_path}: {result.stderr}")
     return json.loads(result.stdout)
@@ -62,7 +60,9 @@ def validate_video_file(file_path: Path) -> dict:
     remaining = file_size
     for i in range(1, total_parts + 1):
         p_size = min(remaining, RECOMMENDED_PART_SIZE)
-        parts_info.append({"part_number": i, "size_bytes": p_size, "size_mb": round(p_size / (1024 * 1024), 2)})
+        parts_info.append(
+            {"part_number": i, "size_bytes": p_size, "size_mb": round(p_size / (1024 * 1024), 2)}
+        )
         remaining -= p_size
 
     # FFprobe stream inspection
@@ -119,7 +119,9 @@ def main() -> None:
         print("Media directory does not exist.")
         return
 
-    files = [f for f in media_dir.iterdir() if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS]
+    files = [
+        f for f in media_dir.iterdir() if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS
+    ]
     print(f"Found {len(files)} video files in media/:")
     for f in sorted(files):
         print(f"--- Analyzing: {f.name} ---")

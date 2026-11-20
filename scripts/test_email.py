@@ -11,7 +11,9 @@ from app.core.config import settings
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Test SMTP configuration and dispatch a test email.")
+    parser = argparse.ArgumentParser(
+        description="Test SMTP configuration and dispatch a test email."
+    )
     parser.add_argument(
         "--to",
         dest="to_email",
@@ -22,7 +24,9 @@ async def main() -> None:
 
     to_email = args.to_email
     if not to_email:
-        print("ERROR: Recipient email address is required. Pass --to your-email@gmail.com or set EMAILS_FROM_EMAIL in .env")
+        print(
+            "ERROR: Recipient email address is required. Pass --to your-email@gmail.com or set EMAILS_FROM_EMAIL in .env"
+        )
         sys.exit(1)
 
     print("=== Testing SMTP Configuration ===")
