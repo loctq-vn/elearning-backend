@@ -118,13 +118,14 @@ async def test_worker_claim_and_lock() -> None:
 @pytest.mark.asyncio
 async def test_worker_heartbeat_lease_renewal() -> None:
     video, step = await _create_test_hierarchy()
+    initial_lease = datetime.now(timezone.utc) + timedelta(minutes=30)
 
+    # Set to PROCESSING so worker does not claim it
     async with async_session_factory() as session:
-        repo = VideoRepository(session)
-        claimed = await repo.claim_next_pending_step(video_id=video.id)
+        s_rec = await session.get(PipelineStepRecord, step.id)
+        s_rec.status = StepStatus.PROCESSING
+        s_rec.lease_expires_at = initial_lease
         await session.commit()
-
-    initial_lease = claimed.lease_expires_at
 
     async with async_session_factory() as session:
         repo = VideoRepository(session)

@@ -106,10 +106,10 @@ class VideoPipelineWorker:
         claimed_job_id: UUID | None = None
         step_type: PipelineStep | None = None
 
-        # 1. Atomic claim via FOR UPDATE SKIP LOCKED
+        # 1. Atomic claim via FOR UPDATE SKIP LOCKED (Phase C worker handles transcoding)
         async with async_session_factory() as session:
             repo = VideoRepository(session)
-            step_record = await repo.claim_next_pending_step()
+            step_record = await repo.claim_next_pending_step(allowed_steps=[PipelineStep.TRANSCODE])
             if not step_record:
                 return False
 
@@ -134,24 +134,18 @@ class VideoPipelineWorker:
         try:
             if step_type == PipelineStep.TRANSCODE:
                 await self._handle_transcode_step(claimed_job_id, video_id)
-            elif step_type == PipelineStep.UPLOAD:
-                # Upload step is typically finalized during multipart completion
+                # Mark step completed
                 async with async_session_factory() as session:
                     repo = VideoRepository(session)
                     await repo.mark_step_success(claimed_job_id)
+                    # Check overall video completion
+                    await self._check_video_completion(repo, video_id)
                     await session.commit()
+                logger.info(
+                    "Successfully completed job %s (step=%s)", claimed_job_id, step_type.value
+                )
             else:
-                logger.info("Step %s queued for subsequent phase.", step_type.value)
-
-            # Mark step completed
-            async with async_session_factory() as session:
-                repo = VideoRepository(session)
-                await repo.mark_step_success(claimed_job_id)
-                # Check overall video completion
-                await self._check_video_completion(repo, video_id)
-                await session.commit()
-
-            logger.info("Successfully completed job %s (step=%s)", claimed_job_id, step_type.value)
+                logger.info("Step %s is not handled by video pipeline worker.", step_type.value)
 
         except Exception as exc:
             error_msg = f"{type(exc).__name__}: {exc!s}"

@@ -317,7 +317,9 @@ class VideoRepository:
         return video
 
     async def claim_next_pending_step(
-        self, video_id: UUID | None = None
+        self,
+        video_id: UUID | None = None,
+        allowed_steps: list[PipelineStep] | None = None,
     ) -> PipelineStepRecord | None:
         """Atomically claim the next eligible pending pipeline step using FOR UPDATE SKIP LOCKED."""
         now = datetime.now(timezone.utc)
@@ -330,6 +332,8 @@ class VideoRepository:
         )
         if video_id is not None:
             stmt = stmt.where(PipelineStepRecord.video_id == video_id)
+        if allowed_steps:
+            stmt = stmt.where(PipelineStepRecord.step.in_(allowed_steps))
 
         stmt = (
             stmt.order_by(PipelineStepRecord.created_at.asc())
