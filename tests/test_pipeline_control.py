@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import httpx
@@ -115,6 +116,7 @@ async def _create_video_with_steps(
         session.add(video)
         await session.flush()
 
+        future_time = datetime.now(timezone.utc) + timedelta(hours=1)
         # Add 4 standard steps
         for step_enum in (
             PipelineStep.UPLOAD,
@@ -130,6 +132,7 @@ async def _create_video_with_steps(
                 if step_enum == PipelineStep.UPLOAD
                 else StepStatus.PENDING,
                 progress=100.0 if step_enum == PipelineStep.UPLOAD else 0.0,
+                next_attempt_at=None if step_enum == PipelineStep.UPLOAD else future_time,
             )
             session.add(step_record)
 

@@ -110,6 +110,10 @@ class VideoRepository:
             PipelineStep.TRANSCRIBE,
             PipelineStep.INDEX,
         ):
+            # Non-upload steps must not be scheduled until upload completes
+            step_next_attempt = (
+                None if step_enum == PipelineStep.UPLOAD else (now + timedelta(days=365))
+            )
             if step_enum in existing_step_map:
                 record = existing_step_map[step_enum]
                 record.status = StepStatus.PENDING
@@ -118,7 +122,7 @@ class VideoRepository:
                 record.started_at = None
                 record.completed_at = None
                 record.attempt_count = 0
-                record.next_attempt_at = None
+                record.next_attempt_at = step_next_attempt
                 record.lease_expires_at = None
                 record.updated_at = now
             else:
@@ -132,6 +136,7 @@ class VideoRepository:
                     started_at=None,
                     completed_at=None,
                     attempt_count=0,
+                    next_attempt_at=step_next_attempt,
                     created_at=now,
                     updated_at=now,
                 )
@@ -159,7 +164,10 @@ class VideoRepository:
                 step.progress = 100.0
                 step.completed_at = now
                 step.updated_at = now
-                break
+            elif step.step == PipelineStep.TRANSCODE:
+                step.status = StepStatus.PENDING
+                step.next_attempt_at = None
+                step.updated_at = now
 
         await self.db.flush()
         return video
@@ -323,12 +331,17 @@ class VideoRepository:
     ) -> PipelineStepRecord | None:
         """Atomically claim the next eligible pending pipeline step using FOR UPDATE SKIP LOCKED."""
         now = datetime.now(timezone.utc)
-        stmt = select(PipelineStepRecord).where(
-            PipelineStepRecord.status == StepStatus.PENDING,
-            or_(
-                PipelineStepRecord.next_attempt_at.is_(None),
-                PipelineStepRecord.next_attempt_at <= now,
-            ),
+        stmt = (
+            select(PipelineStepRecord)
+            .join(Video, PipelineStepRecord.video_id == Video.id)
+            .where(
+                Video.overall_status != VideoOverallStatus.UPLOADING,
+                PipelineStepRecord.status == StepStatus.PENDING,
+                or_(
+                    PipelineStepRecord.next_attempt_at.is_(None),
+                    PipelineStepRecord.next_attempt_at <= now,
+                ),
+            )
         )
         if video_id is not None:
             stmt = stmt.where(PipelineStepRecord.video_id == video_id)
@@ -337,7 +350,7 @@ class VideoRepository:
 
         stmt = (
             stmt.order_by(PipelineStepRecord.created_at.asc())
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=PipelineStepRecord, skip_locked=True)
             .limit(1)
         )
         step_record = (await self.db.execute(stmt)).scalar_one_or_none()

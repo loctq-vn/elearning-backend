@@ -80,7 +80,7 @@ async def _create_test_hierarchy() -> tuple[Video, PipelineStepRecord]:
         step = PipelineStepRecord(
             id=uuid4(),
             video_id=video.id,
-            step=PipelineStep.TRANSCODE,
+            step=PipelineStep.TRANSCRIBE,
             status=StepStatus.PENDING,
             progress=0.0,
             attempt_count=0,

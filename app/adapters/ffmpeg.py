@@ -224,6 +224,8 @@ class FFmpegAdapter:
                 scale_filter,
                 "-c:v",
                 "libx264",
+                "-preset",
+                "veryfast",
                 "-profile:v",
                 rendition.profile,
                 "-b:v",
