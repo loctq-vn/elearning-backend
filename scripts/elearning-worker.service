@@ -7,6 +7,8 @@ Type=simple
 User=ec2-user
 Group=ec2-user
 WorkingDirectory=/home/ec2-user/elearning-backend
+Environment=PYTHONPATH=/home/ec2-user/elearning-backend
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/ec2-user/elearning-backend/.venv/bin/python scripts/run_video_worker.py
 Restart=always
 RestartSec=5
