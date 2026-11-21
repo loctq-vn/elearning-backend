@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
+from app.adapters.ai.whisper import WhisperAdapter
 from app.adapters.ffmpeg import FFmpegAdapter
 from app.adapters.storage import (
     S3StorageAdapter,
@@ -26,6 +27,7 @@ from app.db.models.schema import (
     VideoOverallStatus,
 )
 from app.db.session import async_session_factory
+from app.modules.transcripts.repository import TranscriptRepository
 from app.modules.videos.repository import VideoRepository
 
 logger = logging.getLogger("worker.video_pipeline")
@@ -45,11 +47,14 @@ class VideoPipelineWorker:
         config: Settings = settings,
         storage: S3StorageAdapter | None = None,
         ffmpeg: FFmpegAdapter | None = None,
+        whisper: WhisperAdapter | None = None,
     ) -> None:
         self.config = config
         self.storage = storage or S3StorageAdapter(config)
         self.ffmpeg = ffmpeg or FFmpegAdapter()
-        self.work_dir = Path(tempfile.gettempdir()) / "elearning_worker"
+        self.whisper = whisper or WhisperAdapter(config)
+        base_tmp = Path("/var/tmp") if Path("/var/tmp").is_dir() else Path(tempfile.gettempdir())
+        self.work_dir = base_tmp / "elearning_worker"
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self._stop_event = asyncio.Event()
 
@@ -101,15 +106,18 @@ class VideoPipelineWorker:
                 await session.commit()
                 logger.warning("Reclaimed %d orphaned/expired pipeline jobs.", reclaimed)
 
-    async def _process_next_job(self) -> bool:
+    async def _process_next_job(self, video_id: UUID | None = None) -> bool:
         """Claim a single pending job and execute it."""
         claimed_job_id: UUID | None = None
         step_type: PipelineStep | None = None
 
-        # 1. Atomic claim via FOR UPDATE SKIP LOCKED (Phase C worker handles transcoding)
+        # 1. Atomic claim via FOR UPDATE SKIP LOCKED (Handles transcoding and transcription)
         async with async_session_factory() as session:
             repo = VideoRepository(session)
-            step_record = await repo.claim_next_pending_step(allowed_steps=[PipelineStep.TRANSCODE])
+            step_record = await repo.claim_next_pending_step(
+                video_id=video_id,
+                allowed_steps=[PipelineStep.TRANSCODE, PipelineStep.TRANSCRIBE],
+            )
             if not step_record:
                 return False
 
@@ -134,11 +142,23 @@ class VideoPipelineWorker:
         try:
             if step_type == PipelineStep.TRANSCODE:
                 await self._handle_transcode_step(claimed_job_id, video_id)
-                # Mark step completed
+                # Mark step completed and advance pipeline to TRANSCRIBE
                 async with async_session_factory() as session:
                     repo = VideoRepository(session)
                     await repo.mark_step_success(claimed_job_id)
-                    # Check overall video completion
+                    await repo.unlock_next_pipeline_step(video_id, PipelineStep.TRANSCODE)
+                    await self._check_video_completion(repo, video_id)
+                    await session.commit()
+                logger.info(
+                    "Successfully completed job %s (step=%s)", claimed_job_id, step_type.value
+                )
+            elif step_type == PipelineStep.TRANSCRIBE:
+                await self._handle_transcribe_step(claimed_job_id, video_id)
+                # Mark step completed and advance pipeline to INDEX
+                async with async_session_factory() as session:
+                    repo = VideoRepository(session)
+                    await repo.mark_step_success(claimed_job_id)
+                    await repo.unlock_next_pipeline_step(video_id, PipelineStep.TRANSCRIBE)
                     await self._check_video_completion(repo, video_id)
                     await session.commit()
                 logger.info(
@@ -294,6 +314,68 @@ class VideoPipelineWorker:
 
         # 8. Clean up local temporary files
         shutil.rmtree(video_dir, ignore_errors=True)
+
+    async def _handle_transcribe_step(self, step_id: UUID, video_id: UUID) -> None:
+        """Extract audio to mono 16kHz WAV and transcribe using Whisper (Spec 11 §4.2, §5.2)."""
+        transcribe_dir = self.work_dir / str(video_id) / "transcribe"
+        if transcribe_dir.exists():
+            shutil.rmtree(transcribe_dir, ignore_errors=True)
+        transcribe_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            async with async_session_factory() as session:
+                repo = VideoRepository(session)
+                video = await repo.get_video_by_id(video_id)
+                if not video:
+                    raise ValueError(f"Video {video_id} does not exist")
+                filename = video.original_filename
+                lesson_id = video.lesson_id
+
+            raw_key = video_raw_key(str(video_id), filename)
+            local_raw_path = transcribe_dir / filename
+            local_wav_path = transcribe_dir / "audio_16k.wav"
+
+            # 1. Download raw media from S3
+            logger.info("Downloading raw video for transcription: '%s' -> '%s'", raw_key, local_raw_path)
+            self.storage.download_file(raw_key, local_raw_path)
+
+            # 2. Extract mono 16kHz WAV (Spec 11 §4.2)
+            logger.info("Extracting mono 16kHz WAV audio for Whisper: %s", local_wav_path)
+            self.ffmpeg.extract_audio_for_whisper(local_raw_path, local_wav_path)
+
+            # 3. Transcribe with Whisper (Spec 11 §5.2)
+            def on_transcribe_progress(percent: float) -> None:
+                logger.info("Transcribe progress for video %s: %.1f%%", video_id, percent)
+
+            logger.info("Running Whisper transcription for video %s...", video_id)
+            segments = self.whisper.transcribe(
+                audio_path=local_wav_path,
+                language=self.config.whisper_language,
+                progress_callback=on_transcribe_progress,
+            )
+            logger.info("Whisper generated %d subtitle segments for video %s", len(segments), video_id)
+
+            # 4. Save transcript and segments to RDS (Spec 09 §3.3, §5.4, Spec 11 §5)
+            async with async_session_factory() as session:
+                transcript_repo = TranscriptRepository(session)
+                saved_transcript = await transcript_repo.save_transcription(
+                    lesson_id=lesson_id,
+                    video_id=video_id,
+                    language=self.config.whisper_language,
+                    segments=segments,
+                )
+                await session.commit()
+                logger.info(
+                    "Persisted transcript %s for lesson %s (version %d, %d segments)",
+                    saved_transcript.id,
+                    lesson_id,
+                    saved_transcript.version,
+                    len(segments),
+                )
+        finally:
+            # Spec 11 §4.2, §5.2: Ensure temporary audio and raw media files are cleaned up in finally block
+            shutil.rmtree(transcribe_dir, ignore_errors=True)
+            logger.info("Cleaned up temporary transcription directory for video %s", video_id)
 
     async def _check_video_completion(self, repo: VideoRepository, video_id: UUID) -> None:
         """Update overall video status to COMPLETED if all pipeline steps are COMPLETED."""

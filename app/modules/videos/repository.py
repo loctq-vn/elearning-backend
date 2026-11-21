@@ -416,6 +416,34 @@ class VideoRepository:
             step.updated_at = now
             await self.db.flush()
 
+    async def unlock_next_pipeline_step(
+        self,
+        video_id: UUID,
+        current_step: PipelineStep,
+    ) -> PipelineStepRecord | None:
+        """Advance the pipeline: transition the subsequent step to PENDING with immediate availability (Spec 11 §11.1)."""
+        next_step_map = {
+            PipelineStep.UPLOAD: PipelineStep.TRANSCODE,
+            PipelineStep.TRANSCODE: PipelineStep.TRANSCRIBE,
+            PipelineStep.TRANSCRIBE: PipelineStep.INDEX,
+        }
+        target_step = next_step_map.get(current_step)
+        if not target_step:
+            return None
+
+        now = datetime.now(timezone.utc)
+        stmt = select(PipelineStepRecord).where(
+            PipelineStepRecord.video_id == video_id,
+            PipelineStepRecord.step == target_step,
+        )
+        step = (await self.db.execute(stmt)).scalar_one_or_none()
+        if step and step.status == StepStatus.PENDING:
+            step.next_attempt_at = None
+            step.updated_at = now
+            await self.db.flush()
+            return step
+        return None
+
     async def mark_step_failure(
         self,
         step_id: UUID,
