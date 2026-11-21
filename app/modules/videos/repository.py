@@ -9,6 +9,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.schema import (
+    Chapter,
+    Course,
     Lesson,
     PipelineStep,
     PipelineStepRecord,
@@ -188,15 +190,17 @@ class VideoRepository:
     async def get_pipeline_status(self, video_id: UUID) -> VideoPipelineStatusResponse | None:
         """Fetch complete pipeline status for a video including all step records."""
         stmt = (
-            select(Video, Lesson.title)
+            select(Video, Lesson.title, Course.id, Course.title)
             .join(Lesson, Video.lesson_id == Lesson.id)
+            .outerjoin(Chapter, Lesson.chapter_id == Chapter.id)
+            .outerjoin(Course, Chapter.course_id == Course.id)
             .where(Video.id == video_id)
         )
         row = (await self.db.execute(stmt)).first()
         if not row:
             return None
 
-        video, lesson_title = row
+        video, lesson_title, course_id, course_title = row
         steps = await self.get_pipeline_steps(video.id)
         step_map = {s.step: s for s in steps}
 
@@ -204,6 +208,9 @@ class VideoRepository:
         for step_type in STEP_ORDER:
             s_rec = step_map.get(step_type)
             if s_rec:
+                completed_at = s_rec.completed_at
+                if s_rec.status == StepStatus.COMPLETED and not completed_at:
+                    completed_at = s_rec.updated_at or s_rec.started_at or datetime.now(timezone.utc)
                 step_details.append(
                     PipelineStepDetail(
                         step=s_rec.step.value,
@@ -211,7 +218,7 @@ class VideoRepository:
                         progress=s_rec.progress,
                         error_message=s_rec.error_message,
                         started_at=s_rec.started_at,
-                        completed_at=s_rec.completed_at,
+                        completed_at=completed_at,
                     )
                 )
 
@@ -219,6 +226,10 @@ class VideoRepository:
             video_id=video.id,
             lesson_id=video.lesson_id,
             lesson_title=lesson_title or "",
+            course_id=course_id,
+            course_title=course_title,
+            file_size_bytes=video.file_size_bytes,
+            duration_seconds=video.duration_seconds,
             steps=step_details,
             overall_status=video.overall_status.value,
             error_message=video.error_message,
@@ -240,8 +251,10 @@ class VideoRepository:
         total = (await self.db.execute(count_stmt)).scalar() or 0
 
         query = (
-            select(Video, Lesson.title)
+            select(Video, Lesson.title, Course.id, Course.title)
             .join(Lesson, Video.lesson_id == Lesson.id)
+            .outerjoin(Chapter, Lesson.chapter_id == Chapter.id)
+            .outerjoin(Course, Chapter.course_id == Course.id)
             .order_by(Video.created_at.desc())
         )
         if status_filter:
@@ -252,7 +265,7 @@ class VideoRepository:
         rows = (await self.db.execute(query)).all()
 
         results: list[VideoPipelineStatusResponse] = []
-        for video, lesson_title in rows:
+        for video, lesson_title, course_id, course_title in rows:
             steps = await self.get_pipeline_steps(video.id)
             step_map = {s.step: s for s in steps}
 
@@ -260,6 +273,9 @@ class VideoRepository:
             for step_type in STEP_ORDER:
                 s_rec = step_map.get(step_type)
                 if s_rec:
+                    completed_at = s_rec.completed_at
+                    if s_rec.status == StepStatus.COMPLETED and not completed_at:
+                        completed_at = s_rec.updated_at or s_rec.started_at or datetime.now(timezone.utc)
                     step_details.append(
                         PipelineStepDetail(
                             step=s_rec.step.value,
@@ -267,7 +283,7 @@ class VideoRepository:
                             progress=s_rec.progress,
                             error_message=s_rec.error_message,
                             started_at=s_rec.started_at,
-                            completed_at=s_rec.completed_at,
+                            completed_at=completed_at,
                         )
                     )
 
@@ -276,6 +292,10 @@ class VideoRepository:
                     video_id=video.id,
                     lesson_id=video.lesson_id,
                     lesson_title=lesson_title or "",
+                    course_id=course_id,
+                    course_title=course_title,
+                    file_size_bytes=video.file_size_bytes,
+                    duration_seconds=video.duration_seconds,
                     steps=step_details,
                     overall_status=video.overall_status.value,
                     error_message=video.error_message,

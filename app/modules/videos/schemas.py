@@ -107,6 +107,10 @@ class VideoPipelineStatusResponse(BaseModel):
     video_id: UUID = Field(..., description="PK video")
     lesson_id: UUID = Field(..., description="FK bài giảng")
     lesson_title: str = Field(..., description="Tên bài giảng")
+    course_id: UUID | None = Field(None, description="FK khóa học")
+    course_title: str | None = Field(None, description="Tên khóa học")
+    file_size_bytes: int | None = Field(None, description="Dung lượng video (bytes)")
+    duration_seconds: float | None = Field(None, description="Thời lượng video (giây)")
     steps: list[PipelineStepDetail] = Field(
         default_factory=list, description="Chi tiết 4 bước pipeline"
     )
